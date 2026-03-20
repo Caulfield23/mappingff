@@ -1,0 +1,198 @@
+*Generated with LigParGen (israel.cabezadevaca@yale.edu)
+
+{MOL}
+[atoms]
+   1   H1Z       H869         0.1092
+   2   H1U       H864         0.1515
+   3   H1V       H865         0.1480
+   4   H1W       H866         0.0994
+   5   H1X       H867         0.0912
+   6   H1Y       H868         0.0912
+   7   H1P       H859         0.1456
+   8   H1O       H858         0.1493
+   9   H19       H844         0.1452
+  10   H1A       H845         0.1452
+  11   H1B       H846         0.0981
+  12   H1C       H847         0.0981
+  13   H1D       H848         0.1194
+  14   H1E       H849         0.1194
+  15   H1F       H850         0.1026
+  16   C0H       C817        -0.1140
+  17   C0G       C816         0.1488
+  18   C0I       C818        -0.1228
+  19   C0J       C819        -0.1364
+  20   C0K       C820        -0.1225
+  21   C0M       C821        -0.1364
+  22   C0N       C822        -0.1228
+  23   N0O       N823        -0.1731
+  24   C0C       C812        -0.1483
+  25   C0D       C813        -0.1471
+  26   C0E       C814        -0.1450
+  27   C0A       C810        -0.1450
+  28   C0B       C811        -0.1471
+  29   C09       C809        -0.0827
+  30   C08       C808        -0.0610
+  31   C07       C807        -0.1603
+  32   C06       C806        -0.1329
+  33   C05       C805        -0.1509
+  34   H18       H843         0.1449
+  35   C04       C804        -0.1523
+  36   C03       C803        -0.1509
+  37   C02       C802        -0.1479
+  38   C0F       C815        -0.1729
+  39   C01       C801        -0.0849
+  40   C00       C800        -0.1479
+  41   H26       H876         0.1561
+  42   N0P       N824        -0.1061
+  43   N0Q       N825        -0.0793
+  44   C0R       C826        -0.1718
+  45   C0S       C827        -0.1519
+  46   C0T       C828        -0.0819
+  47   C0U       C829        -0.1910
+  48   C0V       C830         0.0149
+  49   O0W       O831        -0.3775
+  50   C0X       C832         0.4585
+  51   O0Y       O833        -0.4406
+  52   C0Z       C834        -0.1902
+  53   C10       C835        -0.1920
+  54   C11       C836         0.4597
+  55   O12       O837        -0.4397
+  56   O13       O838        -0.3822
+  57   C14       C839         0.0161
+  58   C15       C840        -0.2485
+  59   H16       H841         0.0994
+  60   H17       H842         0.1449
+  61   H1G       H851         0.1026
+  62   H1H       H852         0.2251
+  63   H1I       H853         0.1272
+  64   H1J       H854         0.1188
+  65   H1K       H855         0.1456
+  66   H1M       H856         0.1493
+  67   H1N       H857         0.1486
+  68   H1Q       H860         0.1029
+  69   H1R       H861         0.1480
+  70   H1S       H862         0.1515
+  71   H1T       H863         0.1506
+  72   H20       H870         0.1092
+  73   H21       H871         0.1188
+  74   H22       H872         0.1561
+  75   H23       H873         0.1506
+  76   H24       H874         0.1486
+  77   H25       H875         0.1506
+  78   H27       H877         0.0990
+  79   H28       H878         0.0990
+  80   H29       H879         0.0990
+
+[bonds]
+C01       C00       
+C02       C01       
+C03       C02       
+C04       C03       
+C05       C04       
+C06       C01       
+C07       C06       
+C08       C07       
+C09       C08       
+C0A       C09       
+C0B       C0A       
+C0C       C0B       
+C0D       C0C       
+C0E       C0D       
+C0F       C08       
+C0G       C0F       
+C0H       C0G       
+C0I       C0H       
+C0J       C0I       
+C0K       C0J       
+C0M       C0K       
+C0N       C0M       
+N0O       C0G       
+N0P       N0O       
+N0Q       N0P       
+C0R       N0Q       
+C0S       N0O       
+C0T       C0R       
+C0U       C0T       
+C0V       C0U       
+O0W       C0V       
+C0X       O0W       
+O0Y       C0X       
+C0Z       C0X       
+C10       C0Z       
+C11       C10       
+O12       C11       
+O13       C11       
+C14       O13       
+C15       C14       
+H16       C14       
+H17       C10       
+H18       C10       
+H19       C0Z       
+H1A       C0Z       
+H1B       C0V       
+H1C       C0V       
+H1D       C0U       
+H1E       C0U       
+H1F       C0T       
+H1G       C0T       
+H1H       C0S       
+H1I       C0G       
+H1J       C0F       
+H1K       C0I       
+H1M       C0J       
+H1N       C0K       
+H1O       C0M       
+H1P       C0N       
+H1Q       C08       
+H1R       C0A       
+H1S       C0B       
+H1T       C0C       
+H1U       C0D       
+H1V       C0E       
+H1W       C14       
+H1X       C07       
+H1Y       C07       
+H1Z       C06       
+H20       C06       
+H21       C0F       
+H22       C02       
+H23       C03       
+H24       C04       
+H25       C05       
+H26       C00       
+H27       C15       
+H28       C15       
+H29       C15       
+C05       C00       
+C0E       C09       
+C0N       C0H       
+C0S       C0R       
+
+[impropers]
+C01       C00       C05       H26       
+C00       C01       C02       C06       
+C01       C02       C03       H22       
+C02       C03       C04       H23       
+C03       C04       C05       H24       
+C04       C05       C00       H25       
+C08       C09       C0A       C0E       
+C09       C0A       C0B       H1R       
+C0A       C0B       C0C       H1S       
+C0B       C0C       C0D       H1T       
+C0C       C0D       C0E       H1U       
+C0D       C0E       C09       H1V       
+C0G       C0H       C0I       C0N       
+C0H       C0I       C0J       H1K       
+C0I       C0J       C0K       H1M       
+C0J       C0K       C0M       H1N       
+C0K       C0M       C0N       H1O       
+C0M       C0N       C0H       H1P       
+C0G       N0O       N0P       C0S       
+N0Q       C0R       C0S       C0T       
+N0O       C0S       C0R       H1H       
+O0W       C0X       O0Y       C0Z       
+C10       C11       O12       O13       
+
+[charge_groups]
+C00 C01 C02 C03 C04 C05 C06 C07 C08 C09 C0A C0B C0C C0D C0E C0F C0G C0H C0I C0J C0K C0M C0N N0O N0P N0Q C0R C0S C0T C0U C0V O0W C0X O0Y C0Z C10 C11 O12 O13 C14 C15 H16 H17 H18 H19 H1A H1B H1C H1D H1E H1F H1G H1H H1I H1J H1K H1M H1N H1O H1P H1Q H1R H1S H1T H1U H1V H1W H1X H1Y H1Z H20 H21 H22 H23 H24 H25 H26 H27 H28 H29 
+

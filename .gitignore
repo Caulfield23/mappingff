@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Large/generated outputs
+outputs/
+*.sqlite
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

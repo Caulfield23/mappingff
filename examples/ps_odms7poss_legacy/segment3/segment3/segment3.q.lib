@@ -1,0 +1,141 @@
+*Generated with LigParGen (israel.cabezadevaca@yale.edu)
+
+{MOL}
+[atoms]
+   1   H17       H842         0.0977
+   2   C0O       C823        -0.6964
+   3   O0P       O824        -0.9535
+   4   H0Q       H825         0.0973
+   5   H0X       H832         0.0964
+   6   H0Y       H833         0.0964
+   7   H0Z       H834         0.0980
+   8   H10       H835         0.0980
+   9   H1H       H852         0.0991
+  10   SID       Si13         1.9431
+  11   C0E       C814        -0.7024
+  12   C0F       C815        -0.7311
+  13   C0N       C822        -0.7381
+  14   H18       H843         0.0983
+  15   H19       H844         0.0983
+  16   H1A       H845         0.0983
+  17   H1S       H862         0.1027
+  18   O00       O800        -1.0954
+  19   SI1       Si1          1.9371
+  20   C02       C802        -0.7339
+  21   SI9       Si9          1.9353
+  22   H1I       H853         0.0991
+  23   H1J       H854         0.0991
+  24   H1K       H855         0.0982
+  25   H1T       H863         0.1027
+  26   C03       C803        -0.6960
+  27   O04       O804        -1.0968
+  28   SI5       Si5          1.9409
+  29   C06       C806        -0.7384
+  30   C07       C807        -0.6952
+  31   O08       O808        -1.0978
+  32   C0A       C810        -0.7247
+  33   C0B       C811        -0.7008
+  34   O0C       O812        -1.0739
+  35   O0G       O816        -1.1274
+  36   SIH       Si17         1.6655
+  37   C0I       C818        -0.6725
+  38   C0J       C819        -0.6785
+  39   C0K       C820        -0.6495
+  40   SIM       Si21         1.8945
+  41   H0R       H826         0.0973
+  42   H0S       H827         0.0973
+  43   H0T       H828         0.0960
+  44   H0U       H829         0.0960
+  45   H0V       H830         0.0960
+  46   H0W       H831         0.0964
+  47   H11       H836         0.0980
+  48   H12       H837         0.0975
+  49   H13       H838         0.0975
+  50   H14       H839         0.0975
+  51   H15       H840         0.0977
+  52   H16       H841         0.0977
+  53   H1B       H846         0.0979
+  54   H1C       H847         0.0979
+  55   H1D       H848         0.0979
+  56   H1E       H849         0.0995
+  57   H1F       H850         0.0995
+  58   H1G       H851         0.0995
+  59   H1M       H856         0.0982
+  60   H1N       H857         0.0982
+  61   H1O       H858         0.0982
+  62   H1P       H859         0.0982
+  63   H1Q       H860         0.0982
+  64   H1R       H861         0.1027
+  65   H1U       H864         0.4553
+
+[bonds]
+SI1       O00       
+C02       SI1       
+C03       SI1       
+O04       SI1       
+SI5       O00       
+C06       SI5       
+C07       SI5       
+O08       SI5       
+SI9       O04       
+C0A       SI9       
+C0B       SI9       
+O0C       SI9       
+SID       O08       
+C0E       SID       
+C0F       SID       
+O0G       SID       
+SIH       O0C       
+C0I       SIH       
+C0J       SIH       
+C0K       SIH       
+SIM       O0G       
+C0N       SIM       
+C0O       SIM       
+O0P       SIM       
+H0Q       C0I       
+H0R       C0I       
+H0S       C0I       
+H0T       C0J       
+H0U       C0J       
+H0V       C0J       
+H0W       C0K       
+H0X       C0K       
+H0Y       C0K       
+H0Z       C0A       
+H10       C0A       
+H11       C0A       
+H12       C0B       
+H13       C0B       
+H14       C0B       
+H15       C02       
+H16       C02       
+H17       C02       
+H18       C03       
+H19       C03       
+H1A       C03       
+H1B       C06       
+H1C       C06       
+H1D       C06       
+H1E       C07       
+H1F       C07       
+H1G       C07       
+H1H       C0E       
+H1I       C0E       
+H1J       C0E       
+H1K       C0F       
+H1M       C0F       
+H1N       C0F       
+H1O       C0N       
+H1P       C0N       
+H1Q       C0N       
+H1R       C0O       
+H1S       C0O       
+H1T       C0O       
+H1U       O0P       
+
+[impropers]
+
+[charge_groups]
+O00 SI1 C02 C03 O04 SI5 C06 C07 O08 SI9 C0A C0B O0C SID C0E C0F O0G SIH C0I C0J C0K SIM C0N C0O O0P H0Q H0R H0S H0T H0U H0V H0W H0X H0Y H0Z H10 H11 H12 H13 H14 H15 H16 H17 H18 H19 H1A H1B H1C H1D H1E H1F H1G H1H H1I H1J H1K H1M H1N H1O H1P H1Q H1R H1S H1T H1U 
+

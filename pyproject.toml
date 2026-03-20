@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MacroMapFF"
+version = "0.1.0"
+description = "Molecular parameterization pipeline for generating LAMMPS data from segment databases"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "MacroMapFF contributors" }
+]
+keywords = ["lammps", "rdkit", "molecular-modeling", "force-field", "parameterization"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Scientific/Engineering :: Chemistry",
+]
+dependencies = [
+  "rdkit-pypi>=2022.9.5",
+]
+
+[project.scripts]
+MacroMapFF = "macromapff.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
