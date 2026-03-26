@@ -14,6 +14,7 @@ env/
 
 # Large/generated outputs
 outputs/
+tests/artifacts/
 *.sqlite
 *.log
 

@@ -24,19 +24,31 @@ This repository uses a hybrid pattern:
 python -m pip install -e .
 ```
 
-### 2. Explore CLI
+### 2. Build database from samples
 
 ```bash
-MacroMapFF --help
+MacroMapFF build-db examples/ps_odms7poss_legacy
 ```
 
-### 3. Run isolated legacy example
+### 3. Append new samples (optional)
+
+```bash
+MacroMapFF add-samples /path/to/new_samples_folder
+```
+
+### 4. Parameterize a new molecule
+
+```bash
+MacroMapFF parameterize /path/to/new_molecule.mol
+```
+
+### 5. Legacy example (reference only)
 
 The complete original runnable workflow is isolated in:
 
 - `examples/ps_odms7poss_legacy/`
 
-Run from its own scripts folder:
+Run from its own scripts folder if you need the historical workflow:
 
 ```bash
 cd examples/ps_odms7poss_legacy/scripts
@@ -69,6 +81,30 @@ This keeps the production source code (`src/`) and the legacy runnable snapshot 
 - Branch model: `main` + feature branches
 - CI on push/PR: install, CLI smoke test, pytest
 - Release trigger: git tag `v*` (build wheel/sdist artifacts)
+
+## Standard regression validation
+
+This project includes a fixed end-to-end regression test with local fixtures:
+
+- segment dataset: `tests/fixtures/standard/segdata`
+- target molecule: `tests/fixtures/standard/target/PS-oDMS7POSS.mol`
+
+Run:
+
+```bash
+pytest tests/test_standard_validation.py -q
+```
+
+This validates both core user workflows:
+
+1. Build merged mapping databases from all segment `.lammps.lmp` samples.
+2. Parameterize the target full molecule using the built database.
+
+All build outputs are written to a fixed repository-local path for inspection:
+
+- `tests/artifacts/standard/`
+
+This artifacts folder is ignored by Git, so results are easy to inspect locally and never uploaded to GitHub.
 
 ## License
 

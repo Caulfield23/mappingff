@@ -1,33 +1,73 @@
 from __future__ import annotations
 
 import argparse
-import runpy
-from typing import Dict
+from pathlib import Path
 
-MODULE_MAP: Dict[str, str] = {
-    "build-envkey": "macromapff.pipeline.build_envkey_mapping",
-    "build-final-keymap": "macromapff.pipeline.build_final_keymap",
-    "build-hop-keymap": "macromapff.pipeline.build_hop_keymap",
-    "extract-multiatom": "macromapff.pipeline.extract_multiatom_terms",
-    "build-multiatom-master": "macromapff.pipeline.build_multiatom_master",
-    "generate-lammps": "macromapff.pipeline.generate_lammps_data_from_mol2",
-}
+from macromapff.workflow import add_samples, build_database, parameterize_molecule
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="MacroMapFF",
-        description="MacroMapFF molecular parameterization pipeline CLI",
+        description="MacroMapFF simplified CLI",
     )
-    parser.add_argument("command", choices=sorted(MODULE_MAP.keys()))
-    args, unknown = parser.parse_known_args()
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    module = MODULE_MAP[args.command]
-    # Forward all remaining CLI args to the migrated script module.
-    import sys
+    p_build = sub.add_parser(
+        "build-db",
+        help="Scan a folder of sample .lammps.lmp files and build merged databases.",
+    )
+    p_build.add_argument("samples", type=Path, help="Folder containing sample data")
+    p_build.add_argument(
+        "--db-dir",
+        type=Path,
+        default=Path("database"),
+        help="Database output folder (default: ./database)",
+    )
 
-    sys.argv = [f"MacroMapFF {args.command}", *unknown]
-    runpy.run_module(module, run_name="__main__")
+    p_add = sub.add_parser(
+        "add-samples",
+        help="Append new samples and rebuild merged databases.",
+    )
+    p_add.add_argument("samples", type=Path, help="Folder containing new sample data")
+    p_add.add_argument(
+        "--db-dir",
+        type=Path,
+        default=Path("database"),
+        help="Existing database folder (default: ./database)",
+    )
+
+    p_param = sub.add_parser(
+        "parameterize",
+        help="Generate a parameterized LAMMPS data file for a new molecule.",
+    )
+    p_param.add_argument("mol", type=Path, help="Input molecule .mol file")
+    p_param.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output LAMMPS data file (default: <mol_stem>_param.lmp)",
+    )
+    p_param.add_argument(
+        "--db-dir",
+        type=Path,
+        default=Path("database"),
+        help="Database folder (default: ./database)",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "build-db":
+        build_database(samples_root=args.samples, db_dir=args.db_dir)
+        return
+    if args.command == "add-samples":
+        add_samples(samples_root=args.samples, db_dir=args.db_dir)
+        return
+    if args.command == "parameterize":
+        parameterize_molecule(mol_path=args.mol, db_dir=args.db_dir, out_path=args.out)
+        return
+
+    raise ValueError(f"Unknown command: {args.command}")
 
 
 if __name__ == "__main__":
