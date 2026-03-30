@@ -52,12 +52,12 @@ MacroMapFF/
       __init__.py
       cli.py
       pipeline/
-        build_envkey_mapping.py
-        build_final_keymap.py
-        build_hop_keymap.py
-        extract_multiatom_terms.py
-        build_multiatom_master.py
-        generate_lammps_data_from_mol2.py
+        env_build.py
+        keymap_build.py
+        hop_build.py
+        multi_extract.py
+        multi_build.py
+        lammps_gen.py
   tests/
   pyproject.toml
   README.md
@@ -191,3 +191,171 @@ cd examples/ps_odms7poss_legacy/scripts
 - 运行路径和相对路径
 - Python 环境依赖版本
 - 输入输出文件是否一致
+
+## 13. generate 映射数据流（详细）
+
+本节描述当前实现中，从数据库构建到新分子 parameterize 的完整数据流，重点解释 atom 与 multiatom 的匹配过程，以及跨表查询如何工作。
+
+### 13.1 总览（两阶段）
+
+阶段 A：build-db（构建数据库）
+
+1. 样本发现：扫描 samples 目录下所有 .lammps.lmp，并配对结构文件（.mol/.mol2/.pdb）。
+2. 单模块原子环境提取：为每个模块输出 {module}_atom_env.csv。
+3. 单模块多体观测提取：输出 {module}_multiatom_observed.csv。
+4. 全模块环境合并：输出 final_env_keymap.csv 与 final_env_keymap_type_stats.csv。
+5. hop 回退库构建：输出 hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
+6. 多体主库构建：输出 multiatom_master_keytype.csv。
+
+阶段 B：parameterize（generate 新分子映射并写出 LAMMPS）
+
+1. 载入 hop2/hop1/hop0 与 multiatom_master。
+2. 对新分子每个原子做环境匹配，得到 atom 的全局 key_type。
+3. 枚举 bonds/angles/dihedrals/impropers，做多体匹配。
+4. 将匹配结果写入最终 LAMMPS data 文件。
+
+### 13.2 build-db 的数据流细节
+
+#### 13.2.1 {module}_atom_env.csv（env_build）
+
+- 输入：模块结构文件 + 对应 .lammps.lmp。
+- 对每个 atom 生成 env_key（当前最多 hop2），并保留该 atom 在样本中的 OPLS type 与 LJ 参数。
+- 输出核心字段：
+  - module, atom_index, atom_name
+  - opls_type_id, opls_type_name
+  - charge, sigma, epsilon
+  - env_key
+
+该表是后续 keymap 合并与 multi_extract 的共同输入。
+
+#### 13.2.2 final_env_keymap.csv / final_env_keymap_type_stats.csv（keymap_build）
+
+- 读取所有模块 atom_env 行，并按 canonical env_key 合并。
+- 生成全局 key_id（稳定排序后编号）。
+- final_env_keymap.csv 保存 key 级别环境与均值参数。
+- final_env_keymap_type_stats.csv 保存 type 到 key_id 的桥接关系，核心键为：
+  - key_id
+  - module_name
+  - opls_type_id
+
+这张 type_stats 表是后续 multi_build 的关键跨表桥。
+
+#### 13.2.3 hop2/hop1/hop0_env_keymap.csv（hop_build）
+
+- 从 final_env_keymap.csv 聚合得到三个粒度的回退库。
+- 每行包含：
+  - source_key_ids（该聚合行由哪些 key_id 合并而来）
+  - charge_mean, sigma_mean, epsilon_mean, mass_mean
+  - env_key
+  - 环境拆分列（hop1_shell, hop2_shell 位于末尾）
+
+其中 hop0 的 source_key_ids 在 multi_build 中用于构建 key 等价类（见 13.2.4）。
+
+#### 13.2.4 multiatom_master_keytype.csv（multi_build）
+
+该步骤发生两次跨表映射：
+
+第一次跨表：模块 type -> 全局 key_id
+
+- 来源表：final_env_keymap_type_stats.csv
+- 查询键：(module_name, opls_type_id)
+- 结果：key_id
+
+第二次跨表：key_id -> key 等价类（key_type slot）
+
+- 来源表：hop0_env_keymap.csv
+- 用 source_key_ids 通过并查集（DSU）求连通分量
+- 结果：每个 key_id 映射到一个 key class（如 [12, 29, 31]）
+
+最后将模块观测表中的 lmp_type_tuple 转成 key_type_tuple（每个位置是允许 key 集合），并按 interaction_kind + key_type_tuple 合并，得到 multiatom_master_keytype.csv。
+
+### 13.3 parameterize(generate) 的数据流细节
+
+#### 13.3.1 原子项匹配（atom_match）
+
+输入库：hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
+
+预处理：每个 hop 库都建两套索引
+
+1. env 精确索引
+  - 键：env_key（整串 JSON）
+  - 值：参数与 key_ids
+
+2. structured 索引
+  - 键：拆分列 tuple（z/formal_charge/.../hop1_shell/hop2_shell/neighbor_sig/bond_kinds）
+  - 值：参数与 key_ids
+
+对新分子每个 atom 的查找顺序：
+
+1. 计算该 atom 的 env 特征（hop 深度 2）
+2. 先查 hop2
+  - 先 env 精确命中
+  - 再 structured 命中
+3. 若未命中，按 fallback 顺序查 hop1 -> hop0
+4. 命中后得到：
+  - global_key_id（默认取 key_ids 第一个）
+  - global_key_ids（该 atom 的候选 key 集）
+  - charge/sigma/epsilon/mass
+
+输出：
+
+- atom_records（供写 Atoms 与后续多体匹配）
+- atom_index_key_types.csv（人工审查用）
+
+#### 13.3.2 多体项匹配（multi_match）
+
+输入库：multiatom_master_keytype.csv。
+
+读取后构建倒排索引：
+
+- 可逆项（bond/angle/dihedral）：按 (位置, key_type) 建倒排
+- improper：按中心位 key_type 建倒排
+
+匹配时步骤：
+
+1. 先从结构枚举 terms：
+  - bonds
+  - angles
+  - dihedrals
+  - impropers
+2. 对每个 term，读取每个原子的 global_key_ids，形成 key 选项集合。
+3. 对选项做笛卡尔积，得到候选 key_tuple。
+4. 用倒排索引筛候选 pattern，再做 slot 级集合包含判断：
+  - 可逆项同时检查正向与反向
+  - improper 检查中心位固定 + 其余三位排列匹配
+5. 若命中多个候选：
+  - 记录 ambiguous 日志
+  - 采用稳定排序后的第一组 key_tuple 与第一组 coeff 作为最终选择
+6. 若未命中：
+  - 在当前配置下记 WARN，不中断（strict_missing=False）
+
+#### 13.3.3 写出 LAMMPS（lammps_write）
+
+- atom 的局部 type 编号：由已使用的 global_key_id 去重后重映射为 1..N。
+- multiatom 的 type 编号：按 coeff 去重映射。
+- 最终写出完整 LAMMPS data：Masses、Pair Coeffs、Atoms、Bonds、Angles、Dihedrals、Impropers 及对应 Coeffs。
+
+### 13.4 跨表查询键一览（速查）
+
+1. 模块原子类型 -> 全局 key_id
+  - 表：final_env_keymap_type_stats.csv
+  - 键：(module_name, opls_type_id)
+
+2. 全局 key_id -> 等价 key class
+  - 表：hop0_env_keymap.csv
+  - 键：source_key_ids 连通关系
+
+3. 新分子 atom 环境 -> 原子参数/候选 key_ids
+  - 表：hop2/hop1/hop0_env_keymap.csv
+  - 键：先 env_key，后 structured tuple
+
+4. term 的 key_tuple -> 多体 coeff
+  - 表：multiatom_master_keytype.csv
+  - 键：interaction_kind + key_type_tuple（slot 集合匹配）
+
+### 13.5 人工核查推荐顺序
+
+1. 先看 build.log：missing/ambiguous/cache 命中率。
+2. 看 atom_index_key_types.csv：候选 key 是否合理。
+3. 看 final_env_keymap.csv 与 hop2/hop1/hop0：回退层是否符合预期。
+4. 看 multiatom_master_keytype.csv：关键 interaction 的 key_type_tuple 与 coeff 是否覆盖。

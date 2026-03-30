@@ -95,11 +95,11 @@ def _build_from_samples(samples: List[Dict[str, str]], db_dir: Path) -> None:
     db_dir.mkdir(parents=True, exist_ok=True)
 
     python = sys.executable
-    envkey_script = _pipeline_script("build_envkey_mapping.py")
-    extract_script = _pipeline_script("extract_multiatom_terms.py")
-    final_script = _pipeline_script("build_final_keymap.py")
-    hop_script = _pipeline_script("build_hop_keymap.py")
-    master_script = _pipeline_script("build_multiatom_master.py")
+    envkey_script = _pipeline_script("env_build.py")
+    extract_script = _pipeline_script("multi_extract.py")
+    final_script = _pipeline_script("keymap_build.py")
+    hop_script = _pipeline_script("hop_build.py")
+    master_script = _pipeline_script("multi_build.py")
 
     final_specs: List[str] = []
     multi_specs: List[str] = []
@@ -126,8 +126,6 @@ def _build_from_samples(samples: List[Dict[str, str]], db_dir: Path) -> None:
                 module,
                 "--outdir",
                 str(env_out),
-                "--hop-depth",
-                "2",
             ]
         )
 
@@ -220,7 +218,7 @@ def parameterize_molecule(mol_path: Path, db_dir: Path, out_path: Path | None = 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     python = sys.executable
-    generate_script = _pipeline_script("generate_lammps_data_from_mol2.py")
+    generate_script = _pipeline_script("lammps_gen.py")
 
     _run(
         [
@@ -228,20 +226,8 @@ def parameterize_molecule(mol_path: Path, db_dir: Path, out_path: Path | None = 
             str(generate_script),
             "--structure",
             str(mol_path),
-            "--hop-depth",
-            "4",
-            "--fallback-hops",
-            "1,0",
-            "--final-env-csv",
-            str(db_dir / "final_env_keymap.csv"),
-            "--hop2-env-csv",
-            str(db_dir / "hop2_env_keymap.csv"),
-            "--hop1-env-csv",
-            str(db_dir / "hop1_env_keymap.csv"),
-            "--hop0-env-csv",
-            str(db_dir / "hop0_env_keymap.csv"),
-            "--multiatom-csv",
-            str(db_dir / "multiatom_master_keytype.csv"),
+            "--db-dir",
+            str(db_dir),
             "--out",
             str(out_path),
         ]

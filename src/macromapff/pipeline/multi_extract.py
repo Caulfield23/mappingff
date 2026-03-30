@@ -1,35 +1,14 @@
 #!/usr/bin/env python3
-"""
-脚本说明
---------
-提取 LAMMPS data 文件中的多原子项（bond/angle/dihedral/improper），并结合
-atom_env 构建“观测到的”env_key 组合 -> LMP 原子类型组合映射表。
+"""Extract observed multi-atom term mappings from a LAMMPS data file.
 
-核心特性
---------
-- 支持四类多原子项：bond, angle, dihedral, improper
-- 对 bond/angle/dihedral 做方向规范化（正反等价）
-- 仅保留 LAMMPS 中真实出现的组合（无候选展开、无稀疏空值）
-
-输出文件
---------
-- {out_prefix}.csv：展开后的组合表
-- {out_prefix}.json：同内容 JSON + env 组合摘要
-- {out_prefix}.sqlite：`expanded_multiatom_map` 与 `env_tuple_summary` 两张表
-
-用法示例
---------
-python scripts/extract_multiatom_terms.py \
-  --lmp /path/to/segment1.lammps.lmp \
-  --atom-env-csv /path/to/segment1_atom_env.csv \
-  --out-prefix /path/to/outputs/segment1_multiatom_map
+This script extracts bond/angle/dihedral/improper terms and combines them with
+``atom_env`` data to build observed ``env_key_hash -> LMP type tuple`` mappings.
 """
 
 import argparse
 import csv
 import hashlib
 import json
-import sqlite3
 from pathlib import Path
 
 
@@ -130,7 +109,7 @@ def load_atom_env(atom_env_csv: Path):
             if not module_name:
                 module_name = row.get("module", "")
     if not atom_map:
-        raise ValueError(f"atom_env 为空或不可解析: {atom_env_csv}")
+        raise ValueError(f"atom_env is empty or unreadable: {atom_env_csv}")
     return module_name, atom_map
 
 
@@ -169,7 +148,7 @@ def build_observed_mapping(coeffs, terms, atom_map):
                 obs_types_raw = tuple(atom_map[a]["lmp_type"] for a in atom_ids)
             except KeyError as exc:
                 raise ValueError(
-                    f"atom_env 缺少原子索引 {exc.args[0]}，无法构建多原子映射。"
+                    f"atom_env is missing atom index {exc.args[0]}; cannot build multi-atom mapping."
                 )
 
             can_env_obs, can_types_obs = canonicalize_tuple(
@@ -290,143 +269,30 @@ def write_csv(csv_path: Path, observed_list):
             )
 
 
-def write_json(json_path: Path, module_name: str, observed_list, summary_list):
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "module": module_name,
-        "n_observed_rows": len(observed_list),
-        "n_env_tuple_groups": len(summary_list),
-        "observed_multiatom_map": observed_list,
-        "env_tuple_summary": summary_list,
-    }
-    json_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def write_sqlite(db_path: Path, observed_list, summary_list):
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    cur = conn.cursor()
-
-    cur.execute("DROP TABLE IF EXISTS observed_multiatom_map")
-    cur.execute("DROP TABLE IF EXISTS env_tuple_summary")
-
-    cur.execute(
-        """
-        CREATE TABLE observed_multiatom_map (
-            interaction_kind TEXT,
-            n_atoms INTEGER,
-            env_key_hash TEXT,
-            lmp_type_tuple TEXT,
-            term_count INTEGER,
-            source_term_types TEXT,
-            coeff_param_sets TEXT,
-            PRIMARY KEY (interaction_kind, env_key_hash, lmp_type_tuple)
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE env_tuple_summary (
-            interaction_kind TEXT,
-            n_atoms INTEGER,
-            env_key_hash TEXT,
-            n_terms INTEGER,
-            n_observed_type_tuples INTEGER,
-            observed_type_tuples TEXT,
-            observed_term_types TEXT,
-            PRIMARY KEY (interaction_kind, env_key_hash)
-        )
-        """
-    )
-
-    cur.executemany(
-        """
-        INSERT INTO observed_multiatom_map (
-            interaction_kind, n_atoms, env_key_hash, lmp_type_tuple,
-            term_count, source_term_types, coeff_param_sets
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                row["interaction_kind"],
-                int(row["n_atoms"]),
-                row["env_key_hash"],
-                json.dumps(
-                    row["lmp_type_tuple"], ensure_ascii=False, separators=(",", ":")
-                ),
-                int(row["term_count"]),
-                json.dumps(
-                    row["source_term_types"], ensure_ascii=False, separators=(",", ":")
-                ),
-                json.dumps(
-                    row["coeff_param_sets"], ensure_ascii=False, separators=(",", ":")
-                ),
-            )
-            for row in observed_list
-        ],
-    )
-
-    cur.executemany(
-        """
-        INSERT INTO env_tuple_summary (
-            interaction_kind, n_atoms, env_key_hash, n_terms,
-            n_observed_type_tuples,
-            observed_type_tuples, observed_term_types
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        [
-            (
-                row["interaction_kind"],
-                int(row["n_atoms"]),
-                row["env_key_hash"],
-                int(row["n_terms"]),
-                int(row["n_observed_type_tuples"]),
-                json.dumps(
-                    row["observed_type_tuples"],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-                json.dumps(
-                    row["observed_term_types"],
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            )
-            for row in summary_list
-        ],
-    )
-
-    conn.commit()
-    conn.close()
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="提取 bond/angle/dihedral/improper，并建立仅观测组合的 env_key_hash -> LMP 类型组合映射表。",
+        description="Extract bond/angle/dihedral/improper terms and build observed env_key_hash -> LMP type tuple mappings.",
         epilog=(
-            "示例:\n"
-            "  python scripts/extract_multiatom_terms.py "
+            "Example:\n"
+            "  python scripts/multi_extract.py "
             "--lmp /path/to/segment1.lammps.lmp "
             "--atom-env-csv /path/to/segment1_atom_env.csv "
             "--out-prefix /path/to/outputs/segment1_multiatom_map"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("--lmp", required=True, type=Path, help="模块 LAMMPS data 文件")
+    parser.add_argument("--lmp", required=True, type=Path, help="Module LAMMPS data file")
     parser.add_argument(
         "--atom-env-csv",
         required=True,
         type=Path,
-        help="build_envkey_mapping 生成的 atom_env.csv",
+        help="atom_env.csv generated by env_build",
     )
     parser.add_argument(
         "--out-prefix",
         required=True,
         type=Path,
-        help="输出前缀（不带后缀），将生成 .csv/.json/.sqlite",
+        help="Output prefix (without extension); writes .csv.",
     )
 
     args = parser.parse_args()
@@ -441,19 +307,13 @@ def main():
     )
 
     out_csv = args.out_prefix.with_suffix(".csv")
-    out_json = args.out_prefix.with_suffix(".json")
-    out_db = args.out_prefix.with_suffix(".sqlite")
 
     write_csv(out_csv, observed_list)
-    write_json(out_json, module_name, observed_list, summary_list)
-    write_sqlite(out_db, observed_list, summary_list)
 
-    print("完成：")
+    print("Done:")
     print(f"- observed rows: {len(observed_list)}")
     print(f"- env tuple groups: {len(summary_list)}")
     print(f"- CSV: {out_csv}")
-    print(f"- JSON: {out_json}")
-    print(f"- SQLite: {out_db}")
 
 
 if __name__ == "__main__":

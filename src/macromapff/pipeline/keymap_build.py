@@ -1,36 +1,14 @@
 #!/usr/bin/env python3
-"""
-脚本说明
---------
-合并多个模块的 atom_env 映射，生成可直接用于 mol2 -> LAMMPS data 回填的最终 keymap。
+"""Build a final merged atom-environment keymap across modules.
 
-核心功能
---------
-1) 对全局 env_key 重新编号：key_id = 1,2,3...
-2) 支持同一 env_key 对应多个 LMP 类型时的统计合并
-3) 统计并输出 charge/sigma/epsilon/mass 的均值与标准差
-4) 记录详细合并日志（含多类型 key）
+Inputs:
+- Repeated ``--module-spec`` values in the form
+    ``module_name::atom_env_csv::lammps_data``
 
-输入
-----
-重复传入 --module-spec，格式为：
-  module_name::atom_env_csv::lammps_data
-
-输出
-----
-- {out_prefix}.csv                最终 keymap（含 key_id 与均值/标准差）
-- {out_prefix}.json               同内容 JSON
-- {out_prefix}.sqlite             SQLite（表名 final_keymap）
-- {out_prefix}_type_stats.csv     每个 key 下各 LMP 类型的统计
-- {out_prefix}.log                合并日志
-
-用法示例
---------
-python scripts/build_final_keymap.py \
-  --module-spec 'segment1::outputs/segment1_envdb_lmp_precise/segment1_lmp_precise_atom_env.csv::segment1/segment1/segment1.lammps.lmp' \
-  --module-spec 'segment2::outputs/segment2_envdb_lmp_precise/segment2_lmp_precise_atom_env.csv::segment2/segment2/segment2.lammps.lmp' \
-  --module-spec 'segment3::outputs/segment3_envdb_lmp_precise/segment3_lmp_precise_atom_env.csv::segment3/segment3/segment3.lammps.lmp' \
-  --out-prefix outputs/final_env_keymap
+Outputs:
+- ``{out_prefix}.csv``: merged final keymap
+- ``{out_prefix}_type_stats.csv``: per-type statistics per key
+- ``{out_prefix}.log``: merge diagnostics
 """
 
 import argparse
@@ -38,98 +16,30 @@ import csv
 import hashlib
 import json
 import math
-import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
-
-SECTION_NAMES = {
-    "Masses",
-    "Pair Coeffs",
-    "Bond Coeffs",
-    "Angle Coeffs",
-    "Dihedral Coeffs",
-    "Improper Coeffs",
-    "Atoms",
-    "Bonds",
-    "Angles",
-    "Dihedrals",
-    "Impropers",
-    "Velocities",
-}
-
-
-ENV_KEY_PRIORITY = [
-    "z",
-    "formal_charge",
-    "aromatic",
-    "hybridization",
-    "degree",
-    "total_hs",
-    "in_ring",
-    "ring_count",
-    "neighbor_sig",
-    "bond_kinds",
-]
-
-
-def ordered_env_key_obj(obj: dict):
-    if not isinstance(obj, dict):
-        return obj
-
-    out = {}
-    for key in ENV_KEY_PRIORITY:
-        if key in obj:
-            out[key] = obj[key]
-
-    for key in sorted(k for k in obj.keys() if k not in out):
-        out[key] = obj[key]
-
-    return out
+try:
+    from .core.env import (
+        ENV_SPLIT_COLUMNS,
+        canonicalize_env_key,
+        split_env_key_columns,
+    )
+    from .core.lammps_parse import parse_lammps_masses
+except ImportError:
+    from core.env import ENV_SPLIT_COLUMNS, canonicalize_env_key, split_env_key_columns
+    from core.lammps_parse import parse_lammps_masses
 
 
 def parse_module_spec(spec: str):
     parts = spec.split("::")
     if len(parts) != 3:
         raise ValueError(
-            f"--module-spec 格式错误: {spec}\n"
-            f"应为: module_name::atom_env_csv::lammps_data"
+            f"Invalid --module-spec format: {spec}\n"
+            f"Expected: module_name::atom_env_csv::lammps_data"
         )
     module, atom_env_csv, lmp_data = parts
     return module.strip(), Path(atom_env_csv).expanduser(), Path(lmp_data).expanduser()
-
-
-def parse_lammps_masses(lmp_path: Path):
-    lines = lmp_path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    masses = {}
-    current = None
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        if stripped in SECTION_NAMES:
-            current = stripped
-            continue
-
-        if stripped.startswith("#"):
-            continue
-
-        if current != "Masses":
-            continue
-
-        toks = stripped.split()
-        if len(toks) < 2:
-            continue
-        if not toks[0].lstrip("+-").isdigit():
-            continue
-        type_id = int(toks[0])
-        masses[type_id] = float(toks[1])
-
-    if not masses:
-        raise ValueError(f"在 {lmp_path} 中未解析到 Masses")
-    return masses
 
 
 def _new_stats():
@@ -178,19 +88,6 @@ def _round6(v):
     return round(float(v), 6)
 
 
-def canonicalize_env_key(env_key_raw: str):
-    try:
-        obj = json.loads(env_key_raw)
-        return json.dumps(
-            ordered_env_key_obj(obj),
-            ensure_ascii=False,
-            sort_keys=False,
-            separators=(",", ":"),
-        )
-    except Exception:
-        return (env_key_raw or "").strip()
-
-
 def stable_env_hash(canonical_env_key: str):
     return hashlib.sha256(canonical_env_key.encode("utf-8")).hexdigest()[:16]
 
@@ -200,17 +97,17 @@ def build_final_map(module_specs):
 
     for module_name, atom_env_csv, lmp_data in module_specs:
         if not atom_env_csv.exists():
-            raise FileNotFoundError(f"找不到 atom_env.csv: {atom_env_csv}")
+            raise FileNotFoundError(f"atom_env.csv not found: {atom_env_csv}")
         if not lmp_data.exists():
-            raise FileNotFoundError(f"找不到 lammps data: {lmp_data}")
+            raise FileNotFoundError(f"LAMMPS data file not found: {lmp_data}")
 
         mass_map = parse_lammps_masses(lmp_data)
 
         with atom_env_csv.open("r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                source_env_key_hash = row["env_key_hash"]
-                env_key = canonicalize_env_key(row["env_key"])
+                env_key = canonicalize_env_key(row["env_key"], deep_normalize=False)
+                source_env_key_hash = row.get("env_key_hash") or stable_env_hash(env_key)
                 opls_type_id = int(row["opls_type_id"])
                 opls_type_name = row["opls_type_name"]
                 charge = float(row["charge"])
@@ -219,7 +116,7 @@ def build_final_map(module_specs):
 
                 if opls_type_id not in mass_map:
                     raise ValueError(
-                        f"{lmp_data} 中缺少 type={opls_type_id} 的质量，无法为 {module_name} 合并"
+                        f"Missing mass for type={opls_type_id} in {lmp_data}; cannot merge module {module_name}"
                     )
                 mass = float(mass_map[opls_type_id])
 
@@ -301,6 +198,7 @@ def finalize_records(merged):
                 "key_id": idx,
                 "env_key_hash": env_key_hash,
                 "env_key": env_key,
+                **split_env_key_columns(env_key),
                 "n_source_hashes": len(node["source_hashes"]),
                 "source_hashes": ";".join(sorted(node["source_hashes"])),
                 "n_modules": len(modules),
@@ -370,130 +268,6 @@ def write_csv(path: Path, rows, fieldnames):
             writer.writerow(row)
 
 
-def write_json(path: Path, final_rows, type_rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "n_keys": len(final_rows),
-        "final_keymap": final_rows,
-        "type_stats": type_rows,
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def write_sqlite(path: Path, final_rows, type_rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-
-    conn = sqlite3.connect(str(path))
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        CREATE TABLE final_keymap (
-            key_id INTEGER PRIMARY KEY,
-            env_key_hash TEXT,
-            env_key TEXT,
-            n_modules INTEGER,
-            modules TEXT,
-            n_rows INTEGER,
-            n_lmp_types INTEGER,
-            lmp_type_ids TEXT,
-            lmp_type_names TEXT,
-            canonical_lmp_type_id TEXT,
-            canonical_lmp_type_name TEXT,
-            canonical_count INTEGER,
-            charge_mean REAL,
-            charge_std REAL,
-            sigma_mean REAL,
-            sigma_std REAL,
-            epsilon_mean REAL,
-            epsilon_std REAL,
-            mass_mean REAL,
-            mass_std REAL
-        )
-        """
-    )
-
-    cur.execute(
-        """
-        CREATE TABLE key_type_stats (
-            key_id INTEGER,
-            env_key_hash TEXT,
-            module_name TEXT,
-            opls_type_id INTEGER,
-            opls_type_name TEXT,
-            modules TEXT,
-            n_rows INTEGER,
-            charge_mean REAL,
-            charge_std REAL,
-            sigma_mean REAL,
-            sigma_std REAL,
-            epsilon_mean REAL,
-            epsilon_std REAL,
-            mass_mean REAL,
-            mass_std REAL
-        )
-        """
-    )
-
-    for row in final_rows:
-        cur.execute(
-            """
-            INSERT INTO final_keymap VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                row["key_id"],
-                row["env_key_hash"],
-                row["env_key"],
-                row["n_modules"],
-                row["modules"],
-                row["n_rows"],
-                row["n_lmp_types"],
-                row["lmp_type_ids"],
-                row["lmp_type_names"],
-                row["canonical_lmp_type_id"],
-                row["canonical_lmp_type_name"],
-                row["canonical_count"],
-                row["charge_mean"],
-                row["charge_std"],
-                row["sigma_mean"],
-                row["sigma_std"],
-                row["epsilon_mean"],
-                row["epsilon_std"],
-                row["mass_mean"],
-                row["mass_std"],
-            ),
-        )
-
-    for row in type_rows:
-        cur.execute(
-            """
-            INSERT INTO key_type_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            (
-                row["key_id"],
-                row["env_key_hash"],
-                row["module_name"],
-                row["opls_type_id"],
-                row["opls_type_name"],
-                row["modules"],
-                row["n_rows"],
-                row["charge_mean"],
-                row["charge_std"],
-                row["sigma_mean"],
-                row["sigma_std"],
-                row["epsilon_mean"],
-                row["epsilon_std"],
-                row["mass_mean"],
-                row["mass_std"],
-            ),
-        )
-
-    conn.commit()
-    conn.close()
-
-
 def write_log(path: Path, module_specs, final_rows, type_rows):
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -554,18 +328,18 @@ def write_log(path: Path, module_specs, final_rows, type_rows):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="合并多个模块 atom_env，输出带 key_id 与参数统计的最终 keymap"
+        description="Merge atom_env outputs from multiple modules into a final keymap with statistics."
     )
     parser.add_argument(
         "--module-spec",
         action="append",
         required=True,
-        help="模块输入，格式: module_name::atom_env_csv::lammps_data，可重复传入",
+        help="Module input in the form module_name::atom_env_csv::lammps_data (repeatable).",
     )
     parser.add_argument(
         "--out-prefix",
         required=True,
-        help="输出前缀（不带后缀），将生成 .csv/.json/.sqlite/.log",
+        help="Output prefix (without extension); writes .csv and .log files.",
     )
     args = parser.parse_args()
 
@@ -576,8 +350,6 @@ def main():
     final_rows, type_rows = finalize_records(merged)
 
     final_csv = out_prefix.with_suffix(".csv")
-    final_json = out_prefix.with_suffix(".json")
-    final_sqlite = out_prefix.with_suffix(".sqlite")
     final_log = out_prefix.with_suffix(".log")
     type_csv = out_prefix.parent / f"{out_prefix.name}_type_stats.csv"
 
@@ -586,18 +358,22 @@ def main():
         final_rows,
         [
             "key_id",
-            "env_key_hash",
-            "n_modules",
-            "modules",
-            "n_lmp_types",
-            "canonical_count",
+            "z",
+            "formal_charge",
+            "aromatic",
+            "hybridization",
+            "degree",
+            "total_hs",
+            "in_ring",
+            "ring_count",
+            "neighbor_sig",
+            "bond_kinds",
             "charge_mean",
             "sigma_mean",
             "epsilon_mean",
             "mass_mean",
-            "lmp_type_names",
-            "canonical_lmp_type_name",
-            "env_key",
+            "hop1_shell",
+            "hop2_shell",
         ],
     )
 
@@ -606,32 +382,16 @@ def main():
         type_rows,
         [
             "key_id",
-            "env_key_hash",
             "module_name",
             "opls_type_id",
-            "opls_type_name",
-            "modules",
-            "n_rows",
-            "charge_mean",
-            "charge_std",
-            "sigma_mean",
-            "sigma_std",
-            "epsilon_mean",
-            "epsilon_std",
-            "mass_mean",
-            "mass_std",
         ],
     )
 
-    write_json(final_json, final_rows, type_rows)
-    write_sqlite(final_sqlite, final_rows, type_rows)
     write_log(final_log, module_specs, final_rows, type_rows)
 
-    print("完成：")
+    print("Done:")
     print(f"- final keymap CSV: {final_csv}")
     print(f"- type stats CSV: {type_csv}")
-    print(f"- JSON: {final_json}")
-    print(f"- SQLite: {final_sqlite}")
     print(f"- merge log: {final_log}")
     print(f"- total keys: {len(final_rows)}")
 
