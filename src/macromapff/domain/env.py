@@ -33,6 +33,7 @@ ENV_SPLIT_COLUMNS = [
 
 
 def ordered_env_key_obj(obj: dict):
+    """Reorder env-key dict fields into a stable, preferred key order."""
     if not isinstance(obj, dict):
         return obj
 
@@ -48,6 +49,7 @@ def ordered_env_key_obj(obj: dict):
 
 
 def _stable_sort_list(values):
+    """Sort JSON-like values deterministically by serialized representation."""
     return sorted(
         values,
         key=lambda x: json.dumps(
@@ -57,6 +59,7 @@ def _stable_sort_list(values):
 
 
 def _normalize_env_obj(obj, parent_key: str = ""):
+    """Recursively normalize env objects for deterministic serialization."""
     if isinstance(obj, dict):
         if parent_key == "":
             ordered = ordered_env_key_obj(obj)
@@ -91,6 +94,7 @@ def _normalize_env_obj(obj, parent_key: str = ""):
 
 
 def canonicalize_env_key(env_key_raw: str, deep_normalize: bool = True) -> str:
+    """Normalize raw env-key JSON into a stable canonical string."""
     try:
         obj = json.loads(env_key_raw)
         if deep_normalize:
@@ -108,6 +112,7 @@ def canonicalize_env_key(env_key_raw: str, deep_normalize: bool = True) -> str:
 
 
 def json_cell(v):
+    """Convert scalar/list/dict values into CSV-friendly string cells."""
     if isinstance(v, (list, dict)):
         return json.dumps(v, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     if v is None:
@@ -116,6 +121,7 @@ def json_cell(v):
 
 
 def split_env_key_columns(canonical_env_key: str):
+    """Split canonical env-key JSON into fixed structured columns."""
     cols = {k: "" for k in ENV_SPLIT_COLUMNS}
     try:
         obj = json.loads(canonical_env_key)

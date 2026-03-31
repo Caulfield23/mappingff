@@ -6,6 +6,7 @@ INTERACTION_ORDER = {"bond": 0, "angle": 1, "dihedral": 2, "improper": 3}
 
 
 def _parse_json_field(raw: str):
+    """Parse JSON field content and return empty list on failure."""
     try:
         return json.loads(raw)
     except Exception:
@@ -13,6 +14,7 @@ def _parse_json_field(raw: str):
 
 
 def _canonicalize_key_type_tuple(interaction_kind: str, key_type_tuple):
+    """Canonicalize key-type tuple, normalizing improper permutations."""
     if interaction_kind != "improper" or len(key_type_tuple) != 4:
         return key_type_tuple
 
@@ -25,6 +27,7 @@ def _canonicalize_key_type_tuple(interaction_kind: str, key_type_tuple):
 
 
 def build_master(type_to_keyid, key_to_class, multiatom_specs):
+    """Merge module-level observed terms into master key-type mappings."""
     merged = defaultdict(
         lambda: {
             "term_count": 0,

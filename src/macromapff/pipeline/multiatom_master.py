@@ -11,6 +11,7 @@ from macromapff.io import write_master_csv
 
 
 def parse_multiatom_spec(spec: str):
+    """Parse module multiatom spec token into module name and CSV path."""
     parts = spec.split("::")
     if len(parts) != 2:
         raise ValueError(
@@ -21,11 +22,15 @@ def parse_multiatom_spec(spec: str):
 
 
 class MultiatomMasterBuilder:
+    """Builds merged multi-atom master key-type table from module inputs."""
+
     def __init__(self, final_env_csv: Path, hop0_env_csv: Path) -> None:
+        """Initialize builder with atom key bridge tables."""
         self.final_env_csv = final_env_csv
         self.hop0_env_csv = hop0_env_csv
 
     def build(self, multiatom_specs, out_prefix: Path, log_file: Path | None = None):
+        """Merge module observations and export master CSV (plus optional log)."""
         type_to_keyid = load_type_to_keyid(self.final_env_csv)
         key_to_class = load_hop0_key_classes(self.hop0_env_csv)
         rows, missing_type_refs = build_master(type_to_keyid, key_to_class, multiatom_specs)

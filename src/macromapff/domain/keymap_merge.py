@@ -6,6 +6,7 @@ from macromapff.domain.env import canonicalize_env_key, split_env_key_columns
 
 
 def _new_stats():
+    """Create an empty accumulator for running mean/std statistics."""
     return {
         "n": 0,
         "charge_sum": 0.0,
@@ -20,6 +21,7 @@ def _new_stats():
 
 
 def _add_stats(stats, charge, sigma, epsilon, mass):
+    """Accumulate one row's scalar values into running statistics."""
     stats["n"] += 1
     stats["charge_sum"] += charge
     stats["charge_sum2"] += charge * charge
@@ -32,6 +34,7 @@ def _add_stats(stats, charge, sigma, epsilon, mass):
 
 
 def _mean_std(sum_v, sum2_v, n):
+    """Compute mean and standard deviation from running sums."""
     if n <= 0:
         return None, None
     mean = sum_v / n
@@ -40,12 +43,14 @@ def _mean_std(sum_v, sum2_v, n):
 
 
 def _round6(v):
+    """Round numeric output to 6 decimals while preserving None."""
     if v is None:
         return None
     return round(float(v), 6)
 
 
 def build_final_map(module_specs, mass_map_by_module):
+    """Merge all module atom-env rows into canonical env-key groups."""
     merged = {}
 
     for module_name, atom_env_csv, lmp_data in module_specs:
@@ -102,6 +107,7 @@ def build_final_map(module_specs, mass_map_by_module):
 
 
 def finalize_records(merged):
+    """Finalize merged groups into export-ready final and type-level rows."""
     sorted_items = sorted(merged.items(), key=lambda x: x[0])
     final_rows = []
     type_rows = []

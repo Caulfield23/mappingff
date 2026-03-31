@@ -37,6 +37,7 @@ def build_atom_types(
     structure_path: Path = None,
     build_log_path: Path = None,
 ):
+    """Assign atom-level parameters and record fallback/missing diagnostics."""
     atom_records, local_type_params, fallback_hit_counter, missing = build_atom_types_core(
         mol,
         hop2_env_to_atom_param,
@@ -80,6 +81,7 @@ def assign_multiatom_params(
     strict_missing=True,
     build_log_path: Path = None,
 ):
+    """Assign one interaction kind's multi-atom parameters and emit logs."""
     (
         records,
         missing,
@@ -111,6 +113,7 @@ def assign_multiatom_params(
     return records, missing, ambiguous
 
 def _resolve_db_paths(db_dir: Path):
+    """Resolve canonical database file paths relative to db directory."""
     base = db_dir.expanduser().resolve()
     return {
         "final_env": base / DB_FINAL_ENV,
@@ -122,6 +125,8 @@ def _resolve_db_paths(db_dir: Path):
 
 
 class LammpsGenerator:
+    """End-to-end LAMMPS parameterization orchestrator for one molecule."""
+
     def __init__(
         self,
         db_dir: Path,
@@ -130,6 +135,7 @@ class LammpsGenerator:
         build_log: Path | None = None,
         atom_keytype_map: Path | None = None,
     ) -> None:
+        """Initialize generator with database path and output options."""
         self.db_dir = db_dir
         self.box_padding = box_padding
         self.molecule_id = molecule_id
@@ -137,6 +143,7 @@ class LammpsGenerator:
         self.atom_keytype_map = atom_keytype_map
 
     def generate(self, structure: Path, out: Path):
+        """Run atom typing, multi-atom typing, and LAMMPS file generation."""
         RDLogger.DisableLog("rdApp.warning")
         db_paths = _resolve_db_paths(self.db_dir)
 

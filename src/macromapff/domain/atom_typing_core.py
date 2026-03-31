@@ -25,6 +25,7 @@ ENV_INDEX_COLUMNS = [
 
 
 def _env_index_key_from_obj(obj: dict):
+    """Convert env feature dict into the structured index tuple key."""
     key = []
     for col in ENV_INDEX_COLUMNS:
         key.append(json_cell(obj.get(col, "")))
@@ -32,6 +33,7 @@ def _env_index_key_from_obj(obj: dict):
 
 
 def _env_key_from_obj(obj: dict):
+    """Serialize env feature dict into canonical compact JSON key."""
     norm = {}
     for col in ENV_INDEX_COLUMNS:
         val = obj.get(col, "")
@@ -42,6 +44,7 @@ def _env_key_from_obj(obj: dict):
 
 
 def _env_features_at_hop(features: dict, hop: int):
+    """Project features to a reduced representation for a target hop depth."""
     reduced = dict(features)
     for key in list(reduced.keys()):
         if key.startswith("hop") and key.endswith("_shell"):
@@ -55,6 +58,7 @@ def _env_features_at_hop(features: dict, hop: int):
 
 
 def parse_fallback_hops(raw: str):
+    """Parse comma-separated fallback hop list into unique ordered tuple."""
     if raw is None:
         return tuple()
     items = []
@@ -78,6 +82,7 @@ def build_atom_types_core(
     hop_depth: int,
     fallback_hops=(),
 ):
+    """Assign atom parameter payloads by exact and fallback env matching."""
     env_builder = EnvFeatureBuilder()
     atom_context = env_builder.precompute_atom_context(mol)
 
@@ -87,6 +92,7 @@ def build_atom_types_core(
     struct_key_cache = {}
 
     def _lookup_params(db, features: dict, hop: int):
+        """Lookup one atom's params from env-index and env-key maps."""
         cache_key = (id(features), hop)
         reduced = struct_key_cache.get(cache_key)
         if reduced is None:

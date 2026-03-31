@@ -4,6 +4,7 @@ INTERACTION_ORDER = {"bond": 0, "angle": 1, "dihedral": 2, "improper": 3}
 
 
 def canonicalize_tuple(kind: str, env_tuple: tuple, type_tuple: tuple):
+    """Canonicalize term tuples so equivalent permutations share one key."""
     if kind in {"bond", "angle", "dihedral"}:
         fwd = (env_tuple, type_tuple)
         rev = (tuple(reversed(env_tuple)), tuple(reversed(type_tuple)))
@@ -19,6 +20,7 @@ def canonicalize_tuple(kind: str, env_tuple: tuple, type_tuple: tuple):
 
 
 def build_observed_mapping(coeffs, terms, atom_map):
+    """Build observed multi-atom mapping rows and grouped summaries."""
     observed_records = {}
     env_summary = {}
 

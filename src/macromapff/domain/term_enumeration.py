@@ -3,12 +3,14 @@ from itertools import combinations
 
 
 def _norm_rev_tuple(values):
+    """Return lexicographically smaller ordering between tuple and reverse."""
     vals = tuple(values)
     rev = tuple(reversed(vals))
     return vals if vals <= rev else rev
 
 
 def enumerate_terms(mol):
+    """Enumerate bonds, angles, dihedrals, and impropers from one molecule."""
     bonds = []
     for bond in mol.GetBonds():
         i = bond.GetBeginAtomIdx() + 1

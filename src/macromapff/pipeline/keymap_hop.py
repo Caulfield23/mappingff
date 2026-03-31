@@ -15,6 +15,7 @@ from macromapff.io import write_keymap_log
 
 
 def parse_module_spec(spec: str):
+    """Parse one module spec token into module name and input paths."""
     parts = spec.split("::")
     if len(parts) != 3:
         raise ValueError(
@@ -26,7 +27,10 @@ def parse_module_spec(spec: str):
 
 
 class KeymapBuilder:
+    """Builds final env keymap and merge log across all modules."""
+
     def __init__(self, module_specs) -> None:
+        """Normalize module spec inputs into a parsed spec list."""
         parsed_specs = []
         for spec in module_specs:
             if isinstance(spec, str):
@@ -36,6 +40,7 @@ class KeymapBuilder:
         self.module_specs = parsed_specs
 
     def build(self, out_prefix: Path, out_log: Path | None = None):
+        """Generate merged keymap CSV and companion merge diagnostics log."""
         mass_map_by_module = {}
         for module_name, _, lmp_data in self.module_specs:
             mass_map_by_module[module_name] = parse_lammps_masses(lmp_data)
@@ -78,6 +83,7 @@ class KeymapBuilder:
 
 
 def _row_index_key_at_hop(row: dict, hop: int):
+    """Project one final-env row into grouping key for a hop depth."""
     key_vals = []
     for col in ENV_SPLIT_COLUMNS:
         val = str(row.get(col, "") or "")
@@ -93,6 +99,7 @@ def _row_index_key_at_hop(row: dict, hop: int):
 
 
 def _env_key_from_split_cols(split_cols: dict):
+    """Rebuild env-key JSON string from split column dictionary."""
     obj = {}
     for col in ENV_SPLIT_COLUMNS:
         raw = str(split_cols.get(col, "") or "")
@@ -106,6 +113,7 @@ def _env_key_from_split_cols(split_cols: dict):
 
 
 def _new_hop_stats():
+    """Create accumulator container for hop-level mean aggregation."""
     return {
         "n": 0,
         "charge_sum": 0.0,
@@ -117,6 +125,7 @@ def _new_hop_stats():
 
 
 def _add_hop_stats(node, key_id, charge, sigma, epsilon, mass):
+    """Add one key row into hop-level accumulator statistics."""
     node["n"] += 1
     node["charge_sum"] += charge
     node["sigma_sum"] += sigma
@@ -126,6 +135,7 @@ def _add_hop_stats(node, key_id, charge, sigma, epsilon, mass):
 
 
 def build_hop_map(final_env_csv: Path, hop: int):
+    """Aggregate final env mapping into one fallback hop database table."""
     out = defaultdict(_new_hop_stats)
 
     with final_env_csv.open("r", encoding="utf-8") as f:
@@ -161,6 +171,7 @@ def build_hop_map(final_env_csv: Path, hop: int):
 
 
 def write_hop_csv(rows, out_csv: Path):
+    """Write one hop-level aggregated env database CSV."""
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
@@ -213,10 +224,14 @@ def write_hop_csv(rows, out_csv: Path):
 
 
 class HopDatabaseBuilder:
+    """Builds hop2/hop1/hop0 fallback mapping CSV files."""
+
     def __init__(self, final_env_csv: Path) -> None:
+        """Initialize builder with source final env keymap CSV."""
         self.final_env_csv = final_env_csv
 
     def build(self, hop2_out: Path, hop1_out: Path, hop0_out: Path):
+        """Generate and write all fallback hop databases in one call."""
         hop2_rows = build_hop_map(self.final_env_csv, hop=2)
         hop1_rows = build_hop_map(self.final_env_csv, hop=1)
         hop0_rows = build_hop_map(self.final_env_csv, hop=0)

@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
-"""Build atom-level environment mappings from structure and LAMMPS data.
+"""Build atom-level environment mappings from structure and LAMMPS data."""
 
-Outputs:
-- ``{module}_atom_env.csv``
-"""
-
-from collections import Counter
 from pathlib import Path
 
 from rdkit import Chem
-from rdkit.Chem import rdMolDescriptors
 
 from macromapff.domain import EnvFeatureBuilder
 from macromapff.io import load_structure_any
@@ -20,125 +14,6 @@ from macromapff.io import write_atom_env_csv
 INTERNAL_HOP_DEPTH = 2
 
 
-def _compile_smarts_patterns():
-    pattern_defs = [
-        ("amide_n", "[NX3][CX3](=[OX1])[#6]"),
-        ("amide_c", "[CX3](=[OX1])[NX3]"),
-        ("carboxylate", "[CX3](=O)[O-]"),
-        ("carboxylic_acid", "[CX3](=O)[OX2H1]"),
-        ("ester", "[CX3](=O)[OX2][#6]"),
-        ("ether_o", "[OD2]([#6])[#6]"),
-        ("hydroxyl_o", "[OX2H]"),
-        ("carbonyl_c", "[CX3]=[OX1]"),
-        ("carbonyl_o", "[OX1]=[CX3]"),
-        ("amine_n", "[NX3;H2,H1;!$(NC=O)]"),
-        ("quaternary_n", "[NX4+]"),
-        ("nitrile_c", "[CX2]#N"),
-        ("nitrile_n", "N#[CX2]"),
-        ("sulfone_s", "S(=O)(=O)"),
-        ("sulfoxide_s", "[SX3](=O)"),
-        ("phosphate_p", "P(=O)(O)O"),
-        ("aromatic_atom", "[a]"),
-        ("silicon_atom", "[Si]"),
-        ("siloxane_o", "[O;X2]-[Si]-[O;X2]"),
-    ]
-
-    compiled = []
-    for name, smarts in pattern_defs:
-        q = Chem.MolFromSmarts(smarts)
-        if q is not None:
-            compiled.append((name, q))
-    return compiled
-
-
-SMARTS_PATTERNS = _compile_smarts_patterns()
-
-
-
-
-def bond_stereo_code(bond: Chem.Bond) -> str:
-    stereo = bond.GetStereo()
-    if stereo == Chem.rdchem.BondStereo.STEREOE:
-        return "E"
-    if stereo == Chem.rdchem.BondStereo.STEREOZ:
-        return "Z"
-    if stereo == Chem.rdchem.BondStereo.STEREOANY:
-        return "ANY"
-    return "NONE"
-
-
-def atom_smarts_hits_map(mol: Chem.Mol):
-    hit_map = {idx: [] for idx in range(mol.GetNumAtoms())}
-    for name, query in SMARTS_PATTERNS:
-        for match in mol.GetSubstructMatches(query, uniquify=True):
-            for atom_idx in match:
-                hit_map[atom_idx].append(name)
-    return {idx: sorted(set(tags)) for idx, tags in hit_map.items()}
-
-
-def atom_bond_order_hist(atom: Chem.Atom):
-    env_builder = EnvFeatureBuilder()
-    hist = Counter()
-    for bond in atom.GetBonds():
-        hist[env_builder.bond_type_code(bond)] += 1
-    return dict(sorted(hist.items(), key=lambda x: x[0]))
-
-
-def get_ring_sizes(atom: Chem.Atom, min_size: int = 3, max_size: int = 8):
-    sizes = []
-    for size in range(min_size, max_size + 1):
-        if atom.IsInRingSize(size):
-            sizes.append(size)
-    return sizes
-
-
-def second_shell_element_counts(atom: Chem.Atom):
-    center_idx = atom.GetIdx()
-    first_shell = {nbr.GetIdx() for nbr in atom.GetNeighbors()}
-    counts = Counter()
-    for nbr in atom.GetNeighbors():
-        for nbr2 in nbr.GetNeighbors():
-            idx2 = nbr2.GetIdx()
-            if idx2 == center_idx or idx2 in first_shell:
-                continue
-            counts[nbr2.GetAtomicNum()] += 1
-    return dict(sorted(counts.items(), key=lambda x: x[0]))
-
-
-def _path_bond_signature(mol: Chem.Mol, src_idx: int, dst_idx: int):
-    path = Chem.GetShortestPath(mol, src_idx, dst_idx)
-    if len(path) <= 1:
-        return ""
-    env_builder = EnvFeatureBuilder()
-    sig = []
-    for left, right in zip(path[:-1], path[1:]):
-        bond = mol.GetBondBetweenAtoms(left, right)
-        sig.append(env_builder.bond_type_code(bond))
-    return "-".join(sig)
-
-
-def atom_env_fragment_smiles(mol: Chem.Mol, atom_idx: int, radius: int):
-    env_bonds = Chem.FindAtomEnvironmentOfRadiusN(mol, radius, atom_idx)
-    atom_ids = {atom_idx}
-    for bidx in env_bonds:
-        bond = mol.GetBondWithIdx(bidx)
-        atom_ids.add(bond.GetBeginAtomIdx())
-        atom_ids.add(bond.GetEndAtomIdx())
-
-    if not atom_ids:
-        atom = mol.GetAtomWithIdx(atom_idx)
-        return f"{atom.GetAtomicNum()}"
-
-    frag = Chem.MolFragmentToSmiles(
-        mol,
-        atomsToUse=sorted(atom_ids),
-        bondsToUse=list(env_bonds),
-        isomericSmiles=True,
-        canonical=True,
-    )
-    return frag
-
-
 def build_mapping(
     structure_path: Path,
     out_dir: Path,
@@ -146,12 +21,14 @@ def build_mapping(
     lmp_path: Path = None,
     hop_depth: int = 2,
 ):
+    """Build one module's atom-env CSV from structure and LAMMPS data."""
     if lmp_path is None:
         raise ValueError("--lmp is required for the pure LAMMPS route")
 
     lmp_atoms, _ = parse_lammps_data(lmp_path)
 
     def _build_with_loaded_mol(mol: Chem.Mol, source_path: Path):
+        """Construct atom-env rows from an already loaded RDKit molecule."""
         if mol.GetNumAtoms() != len(lmp_atoms):
             raise ValueError(
                 f"Atom count mismatch: structure={mol.GetNumAtoms()} vs lammps_atoms={len(lmp_atoms)}."

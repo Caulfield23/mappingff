@@ -3,12 +3,14 @@ from itertools import product
 
 
 def _tuple_matches_allowed(key_tuple, allowed):
+    """Check whether each slot value belongs to allowed slot sets."""
     if len(key_tuple) != len(allowed):
         return False
     return all(key_tuple[i] in allowed[i] for i in range(len(key_tuple)))
 
 
 def _improper_matches_pattern(key_tuple, pattern):
+    """Match improper tuple with fixed center and permutable outer atoms."""
     if len(key_tuple) != 4:
         return False
     if key_tuple[0] not in pattern["center_allowed"]:
@@ -32,6 +34,7 @@ def assign_multiatom_params_core(
     idx_rev_inverted,
     idx_imp_center_inverted,
 ):
+    """Assign best-matched coeffs for each multi-atom term candidate set."""
     records = []
     missing = []
     ambiguous = []
@@ -43,6 +46,7 @@ def assign_multiatom_params_core(
     patterns = idx_rev_patterns[kind] if reversible else None
 
     def _candidate_ids(tuple_for_lookup):
+        """Find candidate pattern ids by intersecting inverted indexes."""
         arity_inv = idx_rev_inverted.get(kind, {}).get(len(tuple_for_lookup))
         if not arity_inv:
             return None
@@ -61,12 +65,14 @@ def assign_multiatom_params_core(
         return ids if ids is not None else set()
 
     def _normalize_cache_key(key_tuple):
+        """Normalize tuple orientation for stable cache reuse."""
         if reversible:
             rev = tuple(reversed(key_tuple))
             return key_tuple if key_tuple <= rev else rev
         return (key_tuple[0],) + tuple(sorted(key_tuple[1:]))
 
     def _resolve_coeff_candidates(key_tuple):
+        """Resolve all coefficient candidates for one key tuple."""
         if reversible:
             rev = tuple(reversed(key_tuple))
             coeff_candidates = set()
@@ -160,6 +166,7 @@ def assign_multiatom_params_core(
 
 
 def build_type_map(records):
+    """Assign compact local type ids for unique coefficient tuples."""
     coeff_to_type = {}
     for rec in records:
         coeff = rec["coeff"]

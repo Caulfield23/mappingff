@@ -6,6 +6,7 @@ from macromapff.domain import INTERACTION_ORDER
 
 
 def append_build_log(log_path: Path, lines):
+    """Append plain-text lines to build log file if enabled."""
     if log_path is None:
         return
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -15,6 +16,7 @@ def append_build_log(log_path: Path, lines):
 
 
 def init_build_log(log_path: Path, lines):
+    """Initialize or overwrite build log with header lines."""
     if log_path is None:
         return
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -30,6 +32,7 @@ def write_missing_env_log(
     hop_depth: int,
     fallback_hops,
 ):
+    """Write structured report for atoms missing env-key matches."""
     lines = [
         "[ATOM][MISSING] report",
         f"[ATOM][MISSING] structure={structure_path}",
@@ -58,6 +61,7 @@ def log_multiatom_match(
     build_log_path: Path = None,
     strict_missing: bool = True,
 ):
+    """Log multi-atom matching misses/ambiguities and cache statistics."""
     if missing:
         sample = ", ".join(f"atom_ids={x[0]} candidates={x[1]}" for x in missing[:10])
         append_build_log(
@@ -101,12 +105,14 @@ def log_multiatom_match(
 
 
 def _fmt_float(v):
+    """Format optional float values for human-readable logs."""
     if v is None:
         return ""
     return f"{v:.8f}"
 
 
 def write_keymap_log(path: Path, module_specs, final_rows, type_rows):
+    """Write detailed final keymap merge diagnostics report."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = []
@@ -162,6 +168,7 @@ def write_keymap_log(path: Path, module_specs, final_rows, type_rows):
 
 
 def append_merge_conflict_log(log_path: Path, rows):
+    """Append grouped multi-atom coeff conflict summary to log file."""
     grouped = defaultdict(set)
     for row in rows:
         base_key = (row["interaction_kind"], row["key_type_tuple"])

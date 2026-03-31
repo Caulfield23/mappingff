@@ -25,10 +25,14 @@ SECTION_NAMES = {
 
 
 class DSU:
+    """Simple disjoint-set union for grouping equivalent key ids."""
+
     def __init__(self):
+        """Initialize parent mapping for DSU nodes."""
         self.parent = {}
 
     def find(self, x):
+        """Find representative of a node with path compression."""
         if x not in self.parent:
             self.parent[x] = x
             return x
@@ -37,12 +41,14 @@ class DSU:
         return self.parent[x]
 
     def union(self, a, b):
+        """Union two DSU sets by linking one root to another."""
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.parent[rb] = ra
 
 
 def load_input_structure(structure_path: Path) -> Chem.Mol:
+    """Load a .mol structure for parameterization with robust sanitization."""
     suffix = structure_path.suffix.lower()
     if suffix != ".mol":
         raise ValueError(f"Only .mol input is supported; got: {structure_path}")
@@ -71,9 +77,11 @@ def load_input_structure(structure_path: Path) -> Chem.Mol:
 
 
 def load_structure_any(structure_path: Path):
+    """Load supported structure formats (.mol/.mol2/.pdb) with fallbacks."""
     suffix = structure_path.suffix.lower()
 
     def _sanitize_or_raise(mol, source_path: Path, label: str):
+        """Sanitize an RDKit molecule or raise a descriptive read error."""
         if mol is None:
             raise ValueError(f"RDKit failed to read {label} file: {source_path}")
         try:
@@ -85,6 +93,7 @@ def load_structure_any(structure_path: Path):
         return mol
 
     def _load_pdb(pdb_path: Path):
+        """Load pdb file with sanitization fallback and optional soft failure."""
         if not pdb_path.exists():
             return None
         mol = Chem.MolFromPDBFile(str(pdb_path), removeHs=False, sanitize=True)
@@ -140,6 +149,7 @@ def load_structure_any(structure_path: Path):
 
 
 def _parse_atom_line(toks):
+    """Parse one LAMMPS Atoms row under supported atom-style variants."""
     if len(toks) < 6:
         return None
 
@@ -165,6 +175,7 @@ def _parse_atom_line(toks):
 
 
 def parse_lammps_sections(lmp_path: Path):
+    """Parse Masses, Pair Coeffs, and Atoms sections from LAMMPS data."""
     lines = lmp_path.read_text(encoding="utf-8", errors="ignore").splitlines()
 
     current = None
@@ -225,6 +236,7 @@ def parse_lammps_sections(lmp_path: Path):
 
 
 def parse_lammps_masses(lmp_path: Path):
+    """Parse only Masses section from a LAMMPS data file."""
     masses, _, _ = parse_lammps_sections(lmp_path)
     if not masses:
         raise ValueError(f"No Masses section parsed from: {lmp_path}")
@@ -232,17 +244,23 @@ def parse_lammps_masses(lmp_path: Path):
 
 
 class LammpsDataParser:
+    """Small object wrapper around LAMMPS section parsing helpers."""
+
     def __init__(self, lmp_path: Path) -> None:
+        """Bind parser instance to one LAMMPS data file path."""
         self.lmp_path = lmp_path
 
     def parse_sections(self):
+        """Parse Masses, Pair Coeffs, and Atoms sections."""
         return parse_lammps_sections(self.lmp_path)
 
     def parse_masses(self):
+        """Parse only the Masses section for type-to-mass mapping."""
         return parse_lammps_masses(self.lmp_path)
 
 
 def infer_atomic_num_from_mass(mass: float, max_z: int = 36, tol: float = 0.2):
+    """Infer atomic number by nearest periodic-table mass within tolerance."""
     ptable = Chem.GetPeriodicTable()
     best = None
     for z in range(1, max_z + 1):
@@ -258,6 +276,7 @@ def infer_atomic_num_from_mass(mass: float, max_z: int = 36, tol: float = 0.2):
 
 
 def parse_lammps_data(lmp_path: Path):
+    """Parse LAMMPS data and enrich atoms with inferred element/LJ info."""
     masses, pair_coeffs, atoms = parse_lammps_sections(lmp_path)
 
     if not masses:
@@ -293,6 +312,7 @@ def parse_lammps_data(lmp_path: Path):
 
 
 def _parse_int_tokens(line: str):
+    """Split a topology/coeff line into tokens after stripping comments."""
     body = line.split("#", 1)[0].strip()
     if not body:
         return []
@@ -303,6 +323,7 @@ def _parse_int_tokens(line: str):
 
 
 def parse_lammps_topology_and_coeffs(lmp_path: Path):
+    """Parse topology terms and coefficient sections from LAMMPS data."""
     lines = lmp_path.read_text(encoding="utf-8", errors="ignore").splitlines()
 
     coeff_sections = {
@@ -376,6 +397,7 @@ def parse_lammps_topology_and_coeffs(lmp_path: Path):
 
 
 def load_atom_env(atom_env_csv: Path):
+    """Load atom_env CSV into module name and atom-index mapping."""
     atom_map = {}
     module_name = ""
     with atom_env_csv.open("r", encoding="utf-8") as f:
@@ -394,6 +416,7 @@ def load_atom_env(atom_env_csv: Path):
 
 
 def load_hop_param_db(hop_csv: Path):
+    """Load hop-level atom parameter database with env and structured indexes."""
     if not hop_csv.exists():
         raise FileNotFoundError(f"Hop parameter database not found: {hop_csv}")
 
@@ -427,6 +450,7 @@ def load_hop_param_db(hop_csv: Path):
 
 
 def _parse_json(raw: str):
+    """Parse JSON text and return None when decoding fails."""
     import json
 
     try:
@@ -436,6 +460,7 @@ def _parse_json(raw: str):
 
 
 def load_multiatom_db(multiatom_csv: Path):
+    """Load multi-atom DB and build forward/inverted matching indexes."""
     if not multiatom_csv.exists():
         raise FileNotFoundError(f"Multi-atom parameter database not found: {multiatom_csv}")
 
@@ -446,6 +471,7 @@ def load_multiatom_db(multiatom_csv: Path):
     idx_imp_center_inverted = defaultdict(set)
 
     def _to_allowed_tuple(raw_list):
+        """Normalize raw slot values to tuple of frozenset key-id slots."""
         allowed = []
         for item in raw_list:
             if isinstance(item, list):
@@ -509,6 +535,7 @@ def load_multiatom_db(multiatom_csv: Path):
 
 
 def load_type_to_keyid(final_env_csv: Path):
+    """Build mapping from global type token to canonical key_id."""
     if not final_env_csv.exists():
         raise FileNotFoundError(f"Final env CSV not found: {final_env_csv}")
 
@@ -528,6 +555,7 @@ def load_type_to_keyid(final_env_csv: Path):
 
 
 def load_hop0_key_classes(hop0_csv: Path):
+    """Load hop0 connectivity classes and expand each key to its class list."""
     if not hop0_csv.exists():
         raise FileNotFoundError(f"hop0 CSV not found: {hop0_csv}")
 

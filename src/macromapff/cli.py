@@ -16,11 +16,15 @@ from macromapff.pipeline import parse_multiatom_spec
 
 
 class Workflow:
+    """Orchestrates database building and molecule parameterization workflows."""
+
     def __init__(self, db_dir: Path) -> None:
+        """Initialize workflow state with normalized database paths."""
         self.db_dir = db_dir.expanduser().resolve()
         self.hop_dir = self.db_dir / "hop_env"
 
     def discover_samples(self, samples_root: Path) -> List[Dict[str, str]]:
+        """Discover sample pairs of structure and LAMMPS data files."""
         root = samples_root.expanduser().resolve()
         if not root.exists() or not root.is_dir():
             raise FileNotFoundError(f"Samples folder not found: {root}")
@@ -75,11 +79,13 @@ class Workflow:
         return discovered
 
     def build_database(self, samples_root: Path) -> None:
+        """Build all mapping databases from discovered training samples."""
         samples = self.discover_samples(samples_root)
         self._build_from_samples(samples)
         print(f"[DONE] built database from {len(samples)} samples -> {self.db_dir}")
 
     def add_samples(self, samples_root: Path) -> None:
+        """Rebuild databases using existing and newly provided samples."""
         samples = self.discover_samples(samples_root)
         if not samples:
             raise ValueError("No samples available to build database.")
@@ -87,6 +93,7 @@ class Workflow:
         print(f"[DONE] rebuilt database from {len(samples)} samples -> {self.db_dir}")
 
     def parameterize_molecule(self, mol_path: Path, out_path: Path | None = None) -> None:
+        """Generate a parameterized LAMMPS data file for one molecule."""
         mol_path = mol_path.expanduser().resolve()
 
         if out_path is None:
@@ -100,6 +107,7 @@ class Workflow:
         print(f"[DONE] parameterized output: {out_path}")
 
     def _build_from_samples(self, samples: List[Dict[str, str]]) -> None:
+        """Execute the full multi-stage build pipeline over sample metadata."""
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.hop_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,6 +170,7 @@ class Workflow:
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to workflow subcommands."""
     parser = argparse.ArgumentParser(
         prog="MacroMapFF",
         description="MacroMapFF simplified CLI",

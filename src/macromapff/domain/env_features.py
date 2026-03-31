@@ -7,7 +7,10 @@ from macromapff.domain.env import ordered_env_key_obj
 
 
 class EnvFeatureBuilder:
+    """Builds atom-centered environment features and canonical env keys."""
+
     def bond_type_code(self, bond: Chem.Bond) -> str:
+        """Map RDKit bond types to compact one-letter codes."""
         bt = bond.GetBondType()
         if bt == Chem.rdchem.BondType.SINGLE:
             return "S"
@@ -20,6 +23,7 @@ class EnvFeatureBuilder:
         return str(bt)
 
     def precompute_atom_context(self, mol: Chem.Mol):
+        """Precompute reusable atom context such as distance matrix."""
         dist_matrix = Chem.GetDistanceMatrix(mol)
 
         context = {}
@@ -34,6 +38,7 @@ class EnvFeatureBuilder:
     def hop_shell_signatures(
         self, mol: Chem.Mol, atom_idx: int, max_hop: int = 2, dist_matrix=None
     ):
+        """Collect sorted neighbor shell signatures up to a hop depth."""
         max_hop = min(int(max_hop), 2)
         dist = dist_matrix if dist_matrix is not None else Chem.GetDistanceMatrix(mol)
         shells = {hop: [] for hop in range(1, max_hop + 1)}
@@ -74,6 +79,7 @@ class EnvFeatureBuilder:
         hop_depth: int = 2,
         atom_ctx: dict | None = None,
     ):
+        """Create canonical env-key string and raw feature dict for an atom."""
         atom_idx = atom.GetIdx()
         nbr_sigs = []
         bond_kinds = []

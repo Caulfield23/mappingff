@@ -5,10 +5,12 @@ from pathlib import Path
 
 
 def _fmt_box(lo, hi):
+    """Format one simulation box axis range for LAMMPS output."""
     return f"{lo:12.6f} {hi:12.6f}"
 
 
 def write_atom_env_csv(out_dir: Path, module: str, atom_rows):
+    """Write one module's atom environment table to CSV."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = out_dir / f"{module}_atom_env.csv"
@@ -35,6 +37,7 @@ def write_atom_env_csv(out_dir: Path, module: str, atom_rows):
 
 
 def write_atom_keytype_map(out_path: Path, atom_records):
+    """Write atom-to-key-type mapping for debugging and inspection."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
@@ -51,6 +54,7 @@ def write_atom_keytype_map(out_path: Path, atom_records):
 
 
 def write_keymap_csv(path: Path, rows, fieldnames):
+    """Write generic keymap-like dict rows to a CSV file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
@@ -60,6 +64,7 @@ def write_keymap_csv(path: Path, rows, fieldnames):
 
 
 def write_observed_csv(csv_path: Path, observed_list):
+    """Write observed multi-atom mapping rows to CSV."""
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -98,6 +103,7 @@ def write_observed_csv(csv_path: Path, observed_list):
 
 
 def write_master_csv(path: Path, rows):
+    """Write merged multi-atom master key-type mapping CSV."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "interaction_kind",
@@ -127,6 +133,7 @@ def write_lammps_data(
     molecule_id: int,
     box_padding: float,
 ):
+    """Serialize assigned parameters and topology back to LAMMPS data format."""
     conf = mol.GetConformer()
     xs, ys, zs = [], [], []
     for i in range(mol.GetNumAtoms()):
@@ -241,7 +248,10 @@ def write_lammps_data(
 
 
 class LammpsDataWriter:
+    """Object wrapper for writing one LAMMPS data target file."""
+
     def __init__(self, out_path: Path, molecule_id: int, box_padding: float) -> None:
+        """Initialize writer with output path and box writing options."""
         self.out_path = out_path
         self.molecule_id = molecule_id
         self.box_padding = box_padding
@@ -260,6 +270,7 @@ class LammpsDataWriter:
         dihedral_type_rows,
         improper_type_rows,
     ):
+        """Write one fully parameterized molecule to LAMMPS data file."""
         return write_lammps_data(
             out_path=self.out_path,
             mol=mol,

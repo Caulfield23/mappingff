@@ -10,11 +10,15 @@ from macromapff.io import write_observed_csv
 
 
 class MultiatomExtractor:
+    """Extracts per-module observed multi-atom mapping CSV data."""
+
     def __init__(self, lmp_path: Path, atom_env_csv: Path) -> None:
+        """Bind extractor to one LAMMPS data file and atom_env CSV."""
         self.lmp_path = lmp_path
         self.atom_env_csv = atom_env_csv
 
     def extract(self, out_prefix: Path):
+        """Build observed mappings and write them as CSV output."""
         coeffs, terms = parse_lammps_topology_and_coeffs(self.lmp_path)
         _, atom_map = load_atom_env(self.atom_env_csv)
         observed_list, summary_list = build_observed_mapping(
