@@ -5,9 +5,7 @@ Outputs:
 - ``{module}_atom_env.csv``
 """
 
-import argparse
 import csv
-import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -15,10 +13,7 @@ from pathlib import Path
 from rdkit import Chem
 from rdkit.Chem import rdMolDescriptors
 
-try:
-    from .core.lammps_parse import parse_lammps_sections
-except ImportError:
-    from core.lammps_parse import parse_lammps_sections
+from macromapff.pipeline.core.lammps_parse import parse_lammps_sections
 
 
 INTERNAL_HOP_DEPTH = 2
@@ -388,8 +383,7 @@ def make_env_key(
         sort_keys=False,
         separators=(",", ":"),
     )
-    key_hash = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
-    return key, key_hash, features
+    return key, features
 
 
 def write_outputs(out_dir: Path, module: str, atom_rows):
@@ -458,7 +452,7 @@ def build_mapping(
             sigma = lmp_atom["sigma"]
             epsilon = lmp_atom["epsilon"]
 
-            env_key, _, _ = make_env_key(
+            env_key, _ = make_env_key(
                 mol,
                 atom,
                 hop_depth=hop_depth,
@@ -510,46 +504,3 @@ def build_mapping(
             )
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate atom env_key mappings and build an env_key -> lmp_type database from a module structure and LAMMPS data.",
-        epilog=(
-            "Example:\n"
-            "  python scripts/env_build.py "
-            "--mol /path/to/segment1.mol "
-            "--lmp /path/to/segment1.lammps.lmp "
-            "--module segment1 --outdir /path/to/outputs/segment1_envdb"
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument(
-        "--mol",
-        required=True,
-        type=Path,
-        help="Module structure path (.mol/.mol2/.pdb; if .mol fails, same-name .pdb is attempted automatically).",
-    )
-    parser.add_argument(
-        "--lmp",
-        required=True,
-        type=Path,
-        help="Matching .lammps.lmp file for the module (pure LAMMPS route).",
-    )
-    parser.add_argument("--outdir", required=True, type=Path, help="Output directory")
-    parser.add_argument("--module", required=True, help="Module name, e.g. segment1")
-
-    args = parser.parse_args()
-
-    csv_path = build_mapping(
-        structure_path=args.mol,
-        out_dir=args.outdir,
-        module=args.module,
-        lmp_path=args.lmp,
-        hop_depth=INTERNAL_HOP_DEPTH,
-    )
-
-    print("Done:")
-    print(f"- atom env table: {csv_path}")
-
-
-if __name__ == "__main__":
-    main()

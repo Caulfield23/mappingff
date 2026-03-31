@@ -6,12 +6,8 @@ from pathlib import Path
 
 from rdkit import Chem
 
-try:
-    from ..env_build import make_env_key, precompute_atom_context
-    from .env import json_cell
-except ImportError:
-    from env_build import make_env_key, precompute_atom_context
-    from core.env import json_cell
+from macromapff.pipeline.env_build import make_env_key, precompute_atom_context
+from macromapff.pipeline.core.env import json_cell
 
 
 ENV_INDEX_COLUMNS = [
@@ -231,7 +227,7 @@ def build_atom_types(
 
     for atom_idx in range(mol.GetNumAtoms()):
         atom = mol.GetAtomWithIdx(atom_idx)
-        env_key_raw, _, env_features = make_env_key(
+        env_key_raw, env_features = make_env_key(
             mol,
             atom,
             hop_depth=hop_depth,

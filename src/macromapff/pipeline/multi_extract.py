@@ -2,14 +2,15 @@
 """Extract observed multi-atom term mappings from a LAMMPS data file.
 
 This script extracts bond/angle/dihedral/improper terms and combines them with
-``atom_env`` data to build observed ``env_key_hash -> LMP type tuple`` mappings.
+``atom_env`` data to build observed ``env_key_tuple -> LMP type tuple`` mappings.
 """
 
-import argparse
 import csv
-import hashlib
 import json
 from pathlib import Path
+
+
+INTERACTION_ORDER = {"bond": 0, "angle": 1, "dihedral": 2, "improper": 3}
 
 
 def _parse_int_tokens(line: str):
@@ -128,11 +129,6 @@ def canonicalize_tuple(kind: str, env_tuple: tuple, type_tuple: tuple):
     return env_tuple, type_tuple
 
 
-def env_tuple_hash(env_tuple: tuple):
-    payload = "|".join(env_tuple)
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:20]
-
-
 def build_observed_mapping(coeffs, terms, atom_map):
     observed_records = {}
     env_summary = {}
@@ -160,7 +156,7 @@ def build_observed_mapping(coeffs, terms, atom_map):
                 env_summary[summary_key] = {
                     "interaction_kind": kind,
                     "n_atoms": len(can_env_obs),
-                    "env_key_hash": env_tuple_hash(can_env_obs),
+                    "env_key_tuple": list(can_env_obs),
                     "n_terms": 0,
                     "observed_type_tuples": set(),
                     "observed_term_types": set(),
@@ -174,7 +170,7 @@ def build_observed_mapping(coeffs, terms, atom_map):
                 observed_records[rec_key] = {
                     "interaction_kind": kind,
                     "n_atoms": len(can_env_obs),
-                    "env_key_hash": env_tuple_hash(can_env_obs),
+                    "env_key_tuple": list(can_env_obs),
                     "lmp_type_tuple": list(can_types_obs),
                     "term_count": 0,
                     "source_term_types": set(),
@@ -190,8 +186,8 @@ def build_observed_mapping(coeffs, terms, atom_map):
     for _, rec in sorted(
         observed_records.items(),
         key=lambda x: (
-            x[1]["interaction_kind"],
-            x[1]["env_key_hash"],
+            INTERACTION_ORDER.get(x[1]["interaction_kind"], 99),
+            tuple(x[1]["env_key_tuple"]),
             tuple(x[1]["lmp_type_tuple"]),
         ),
     ):
@@ -199,7 +195,7 @@ def build_observed_mapping(coeffs, terms, atom_map):
             {
                 "interaction_kind": rec["interaction_kind"],
                 "n_atoms": rec["n_atoms"],
-                "env_key_hash": rec["env_key_hash"],
+                "env_key_tuple": rec["env_key_tuple"],
                 "lmp_type_tuple": rec["lmp_type_tuple"],
                 "term_count": int(rec["term_count"]),
                 "source_term_types": sorted(rec["source_term_types"]),
@@ -210,13 +206,16 @@ def build_observed_mapping(coeffs, terms, atom_map):
     summary_list = []
     for _, s in sorted(
         env_summary.items(),
-        key=lambda x: (x[1]["interaction_kind"], x[1]["env_key_hash"]),
+        key=lambda x: (
+            INTERACTION_ORDER.get(x[1]["interaction_kind"], 99),
+            tuple(x[1]["env_key_tuple"]),
+        ),
     ):
         summary_list.append(
             {
                 "interaction_kind": s["interaction_kind"],
                 "n_atoms": s["n_atoms"],
-                "env_key_hash": s["env_key_hash"],
+                "env_key_tuple": s["env_key_tuple"],
                 "n_terms": int(s["n_terms"]),
                 "n_observed_type_tuples": len(s["observed_type_tuples"]),
                 "observed_type_tuples": [
@@ -237,7 +236,6 @@ def write_csv(csv_path: Path, observed_list):
             fieldnames=[
                 "interaction_kind",
                 "n_atoms",
-                "env_key_hash",
                 "lmp_type_tuple",
                 "term_count",
                 "source_term_types",
@@ -250,7 +248,6 @@ def write_csv(csv_path: Path, observed_list):
                 {
                     "interaction_kind": row["interaction_kind"],
                     "n_atoms": row["n_atoms"],
-                    "env_key_hash": row["env_key_hash"],
                     "lmp_type_tuple": json.dumps(
                         row["lmp_type_tuple"], ensure_ascii=False, separators=(",", ":")
                     ),
@@ -269,52 +266,21 @@ def write_csv(csv_path: Path, observed_list):
             )
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Extract bond/angle/dihedral/improper terms and build observed env_key_hash -> LMP type tuple mappings.",
-        epilog=(
-            "Example:\n"
-            "  python scripts/multi_extract.py "
-            "--lmp /path/to/segment1.lammps.lmp "
-            "--atom-env-csv /path/to/segment1_atom_env.csv "
-            "--out-prefix /path/to/outputs/segment1_multiatom_map"
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
-    parser.add_argument("--lmp", required=True, type=Path, help="Module LAMMPS data file")
-    parser.add_argument(
-        "--atom-env-csv",
-        required=True,
-        type=Path,
-        help="atom_env.csv generated by env_build",
-    )
-    parser.add_argument(
-        "--out-prefix",
-        required=True,
-        type=Path,
-        help="Output prefix (without extension); writes .csv.",
-    )
-
-    args = parser.parse_args()
-
-    coeffs, terms = parse_lammps_topology_and_coeffs(args.lmp)
-    module_name, atom_map = load_atom_env(args.atom_env_csv)
-
+def extract_multiatom_mapping(
+    lmp_path: Path,
+    atom_env_csv: Path,
+    out_prefix: Path,
+):
+    coeffs, terms = parse_lammps_topology_and_coeffs(lmp_path)
+    _, atom_map = load_atom_env(atom_env_csv)
     observed_list, summary_list = build_observed_mapping(
         coeffs=coeffs,
         terms=terms,
         atom_map=atom_map,
     )
 
-    out_csv = args.out_prefix.with_suffix(".csv")
-
+    out_csv = out_prefix.with_suffix(".csv")
     write_csv(out_csv, observed_list)
-
-    print("Done:")
-    print(f"- observed rows: {len(observed_list)}")
-    print(f"- env tuple groups: {len(summary_list)}")
-    print(f"- CSV: {out_csv}")
+    return out_csv, observed_list, summary_list
 
 
-if __name__ == "__main__":
-    main()

@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-import argparse
 import csv
 import json
 from collections import defaultdict
 from pathlib import Path
 
-try:
-    from .core.env import ENV_SPLIT_COLUMNS, split_env_key_columns
-except ImportError:
-    from core.env import ENV_SPLIT_COLUMNS, split_env_key_columns
+from macromapff.pipeline.core.env import ENV_SPLIT_COLUMNS, split_env_key_columns
 
 
 def _row_index_key_at_hop(row: dict, hop: int):
@@ -145,51 +141,19 @@ def write_hop_csv(rows, out_csv: Path):
             )
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Aggregate final_env_keymap.csv into hop2, hop1, and hop0 fallback environment-key databases."
-    )
-    parser.add_argument(
-        "--final-env-csv",
-        type=Path,
-        default=Path("outputs/final_env_keymap.csv"),
-        help="Input final_env_keymap.csv",
-    )
-    parser.add_argument(
-        "--hop2-out",
-        type=Path,
-        default=Path("outputs/hop2_env_keymap.csv"),
-        help="Output CSV for hop2 database",
-    )
-    parser.add_argument(
-        "--hop1-out",
-        type=Path,
-        default=Path("outputs/hop1_env_keymap.csv"),
-        help="Output CSV for hop1 database",
-    )
-    parser.add_argument(
-        "--hop0-out",
-        type=Path,
-        default=Path("outputs/hop0_env_keymap.csv"),
-        help="Output CSV for hop0 fallback database (all hop shells removed)",
-    )
-    args = parser.parse_args()
+def build_hop_databases(
+    final_env_csv: Path,
+    hop2_out: Path,
+    hop1_out: Path,
+    hop0_out: Path,
+):
+    hop2_rows = build_hop_map(final_env_csv, hop=2)
+    hop1_rows = build_hop_map(final_env_csv, hop=1)
+    hop0_rows = build_hop_map(final_env_csv, hop=0)
 
-    if not args.final_env_csv.exists():
-        raise FileNotFoundError(f"Input database not found: {args.final_env_csv}")
-
-    hop2_rows = build_hop_map(args.final_env_csv, hop=2)
-    hop1_rows = build_hop_map(args.final_env_csv, hop=1)
-    hop0_rows = build_hop_map(args.final_env_csv, hop=0)
-
-    write_hop_csv(hop2_rows, args.hop2_out)
-    write_hop_csv(hop1_rows, args.hop1_out)
-    write_hop_csv(hop0_rows, args.hop0_out)
-
-    print(f"[DONE] hop2: {args.hop2_out} ({len(hop2_rows)} keys)")
-    print(f"[DONE] hop1: {args.hop1_out} ({len(hop1_rows)} keys)")
-    print(f"[DONE] hop0: {args.hop0_out} ({len(hop0_rows)} keys)")
+    write_hop_csv(hop2_rows, hop2_out)
+    write_hop_csv(hop1_rows, hop1_out)
+    write_hop_csv(hop0_rows, hop0_out)
+    return hop2_rows, hop1_rows, hop0_rows
 
 
-if __name__ == "__main__":
-    main()

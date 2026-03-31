@@ -7,28 +7,21 @@ Inputs:
 
 Outputs:
 - ``{out_prefix}.csv``: merged final keymap
-- ``{out_prefix}_type_stats.csv``: per-type statistics per key
 - ``{out_prefix}.log``: merge diagnostics
 """
 
-import argparse
 import csv
-import hashlib
 import json
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
 
-try:
-    from .core.env import (
-        ENV_SPLIT_COLUMNS,
-        canonicalize_env_key,
-        split_env_key_columns,
-    )
-    from .core.lammps_parse import parse_lammps_masses
-except ImportError:
-    from core.env import ENV_SPLIT_COLUMNS, canonicalize_env_key, split_env_key_columns
-    from core.lammps_parse import parse_lammps_masses
+from macromapff.pipeline.core.env import (
+    ENV_SPLIT_COLUMNS,
+    canonicalize_env_key,
+    split_env_key_columns,
+)
+from macromapff.pipeline.core.lammps_parse import parse_lammps_masses
 
 
 def parse_module_spec(spec: str):
@@ -88,10 +81,6 @@ def _round6(v):
     return round(float(v), 6)
 
 
-def stable_env_hash(canonical_env_key: str):
-    return hashlib.sha256(canonical_env_key.encode("utf-8")).hexdigest()[:16]
-
-
 def build_final_map(module_specs):
     merged = {}
 
@@ -107,7 +96,6 @@ def build_final_map(module_specs):
             reader = csv.DictReader(f)
             for row in reader:
                 env_key = canonicalize_env_key(row["env_key"], deep_normalize=False)
-                source_env_key_hash = row.get("env_key_hash") or stable_env_hash(env_key)
                 opls_type_id = int(row["opls_type_id"])
                 opls_type_name = row["opls_type_name"]
                 charge = float(row["charge"])
@@ -123,7 +111,6 @@ def build_final_map(module_specs):
                 if env_key not in merged:
                     merged[env_key] = {
                         "env_key": env_key,
-                        "source_hashes": set(),
                         "modules": set(),
                         "stats": _new_stats(),
                         "type_stats": defaultdict(
@@ -136,7 +123,6 @@ def build_final_map(module_specs):
                     }
 
                 node = merged[env_key]
-                node["source_hashes"].add(source_env_key_hash)
                 node["modules"].add(module_name)
                 _add_stats(node["stats"], charge, sigma, epsilon, mass)
 
@@ -150,13 +136,12 @@ def build_final_map(module_specs):
 
 
 def finalize_records(merged):
-    sorted_items = sorted(merged.items(), key=lambda x: stable_env_hash(x[0]))
+    sorted_items = sorted(merged.items(), key=lambda x: x[0])
     final_rows = []
     type_rows = []
 
     for idx, (canonical_env_key, node) in enumerate(sorted_items, start=1):
         env_key = node["env_key"]
-        env_key_hash = stable_env_hash(canonical_env_key)
         modules = sorted(node["modules"])
 
         type_counts = Counter()
@@ -192,15 +177,14 @@ def finalize_records(merged):
         )
         lmp_type_ids = [f"{m}:{t}" for m, t, _ in lmp_type_keys]
         lmp_type_names = [f"{m}:{n}" for m, _, n in lmp_type_keys]
+        global_type_ids = [f"{m}_{t}" for m, t, _ in lmp_type_keys]
 
         final_rows.append(
             {
                 "key_id": idx,
-                "env_key_hash": env_key_hash,
+                "global_type_ids": ";".join(global_type_ids),
                 "env_key": env_key,
                 **split_env_key_columns(env_key),
-                "n_source_hashes": len(node["source_hashes"]),
-                "source_hashes": ";".join(sorted(node["source_hashes"])),
                 "n_modules": len(modules),
                 "modules": ";".join(modules),
                 "n_rows": total_n,
@@ -239,7 +223,6 @@ def finalize_records(merged):
             type_rows.append(
                 {
                     "key_id": idx,
-                    "env_key_hash": env_key_hash,
                     "module_name": module_name,
                     "opls_type_id": type_id,
                     "opls_type_name": type_name,
@@ -282,16 +265,14 @@ def write_log(path: Path, module_specs, final_rows, type_rows):
 
     multi_type_keys = [r for r in final_rows if r["n_lmp_types"] > 1]
     lines.append(f"keys with multiple LMP types: {len(multi_type_keys)}")
-    hash_collision_keys = [r for r in final_rows if r.get("n_source_hashes", 1) > 1]
-    lines.append(
-        f"merged-from-multiple-source-hashes (same env_key normalized): {len(hash_collision_keys)}"
-    )
 
     lines.append("")
+    lines.append("notes: types = number of distinct LMP atom types merged into this key")
+    lines.append("notes: rows = number of atom rows merged for this key across all modules")
     lines.append("--- key-level stats (mean ± std) ---")
     for row in final_rows:
         lines.append(
-            f"key_id={row['key_id']} hash={row['env_key_hash']} "
+            f"key_id={row['key_id']} "
             f"types={row['n_lmp_types']} rows={row['n_rows']} "
             f"charge={_fmt_float(row['charge_mean'])}±{_fmt_float(row['charge_std'])} "
             f"sigma={_fmt_float(row['sigma_mean'])}±{_fmt_float(row['sigma_std'])} "
@@ -300,16 +281,14 @@ def write_log(path: Path, module_specs, final_rows, type_rows):
         )
 
     lines.append("")
+    lines.append("notes: multi-type key details is atom-type merge detail only (not bond/angle/dihedral/improper)")
     lines.append("--- multi-type key details ---")
     type_rows_by_key = defaultdict(list)
     for tr in type_rows:
         type_rows_by_key[tr["key_id"]].append(tr)
 
     for row in multi_type_keys:
-        lines.append(
-            f"key_id={row['key_id']} hash={row['env_key_hash']} "
-            f"lmp_type_ids=[{row['lmp_type_ids']}]"
-        )
+        lines.append(f"key_id={row['key_id']} lmp_type_ids=[{row['lmp_type_ids']}]")
         for tr in sorted(
             type_rows_by_key[row["key_id"]],
             key=lambda x: (x["module_name"], x["opls_type_id"]),
@@ -326,38 +305,29 @@ def write_log(path: Path, module_specs, final_rows, type_rows):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Merge atom_env outputs from multiple modules into a final keymap with statistics."
-    )
-    parser.add_argument(
-        "--module-spec",
-        action="append",
-        required=True,
-        help="Module input in the form module_name::atom_env_csv::lammps_data (repeatable).",
-    )
-    parser.add_argument(
-        "--out-prefix",
-        required=True,
-        help="Output prefix (without extension); writes .csv and .log files.",
-    )
-    args = parser.parse_args()
+def build_final_keymap(module_specs, out_prefix: Path, out_log: Path | None = None):
+    parsed_specs = []
+    for spec in module_specs:
+        if isinstance(spec, str):
+            parsed_specs.append(parse_module_spec(spec))
+        else:
+            parsed_specs.append(spec)
 
-    module_specs = [parse_module_spec(spec) for spec in args.module_spec]
-    out_prefix = Path(args.out_prefix).expanduser()
-
-    merged = build_final_map(module_specs)
+    merged = build_final_map(parsed_specs)
     final_rows, type_rows = finalize_records(merged)
 
+    out_prefix = Path(out_prefix).expanduser()
     final_csv = out_prefix.with_suffix(".csv")
-    final_log = out_prefix.with_suffix(".log")
-    type_csv = out_prefix.parent / f"{out_prefix.name}_type_stats.csv"
+    final_log = (
+        Path(out_log).expanduser() if out_log is not None else out_prefix.with_suffix(".log")
+    )
 
     write_csv(
         final_csv,
         final_rows,
         [
             "key_id",
+            "global_type_ids",
             "z",
             "formal_charge",
             "aromatic",
@@ -376,25 +346,7 @@ def main():
             "hop2_shell",
         ],
     )
-
-    write_csv(
-        type_csv,
-        type_rows,
-        [
-            "key_id",
-            "module_name",
-            "opls_type_id",
-        ],
-    )
-
-    write_log(final_log, module_specs, final_rows, type_rows)
-
-    print("Done:")
-    print(f"- final keymap CSV: {final_csv}")
-    print(f"- type stats CSV: {type_csv}")
-    print(f"- merge log: {final_log}")
-    print(f"- total keys: {len(final_rows)}")
+    write_log(final_log, parsed_specs, final_rows, type_rows)
+    return final_csv, final_log, final_rows, type_rows
 
 
-if __name__ == "__main__":
-    main()

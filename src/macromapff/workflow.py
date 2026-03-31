@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from pathlib import Path
 from typing import Dict, List
 
-
-def _pipeline_script(name: str) -> Path:
-    return Path(__file__).resolve().parent / "pipeline" / name
-
-
-def _run(cmd: List[str]) -> None:
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(f"Command failed ({result.returncode}): {' '.join(cmd)}")
-
+from macromapff.pipeline.env_build import build_mapping, INTERNAL_HOP_DEPTH
+from macromapff.pipeline.multi_extract import extract_multiatom_mapping
+from macromapff.pipeline.keymap_build import build_final_keymap
+from macromapff.pipeline.hop_build import build_hop_databases
+from macromapff.pipeline.multi_build import build_multiatom_master, parse_multiatom_spec
+from macromapff.pipeline.lammps_gen import generate_lammps_data
 
 def _discover_samples(samples_root: Path) -> List[Dict[str, str]]:
     root = samples_root.expanduser().resolve()
@@ -72,34 +65,12 @@ def _discover_samples(samples_root: Path) -> List[Dict[str, str]]:
     return discovered
 
 
-def _manifest_path(db_dir: Path) -> Path:
-    return db_dir / "samples_manifest.json"
-
-
-def _write_manifest(db_dir: Path, samples: List[Dict[str, str]]) -> None:
-    path = _manifest_path(db_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"samples": samples}, indent=2), encoding="utf-8")
-
-
-def _load_manifest(db_dir: Path) -> List[Dict[str, str]]:
-    path = _manifest_path(db_dir)
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return list(data.get("samples", []))
-
-
 def _build_from_samples(samples: List[Dict[str, str]], db_dir: Path) -> None:
     db_dir = db_dir.expanduser().resolve()
     db_dir.mkdir(parents=True, exist_ok=True)
 
-    python = sys.executable
-    envkey_script = _pipeline_script("env_build.py")
-    extract_script = _pipeline_script("multi_extract.py")
-    final_script = _pipeline_script("keymap_build.py")
-    hop_script = _pipeline_script("hop_build.py")
-    master_script = _pipeline_script("multi_build.py")
+    hop_dir = db_dir / "hop_env"
+    hop_dir.mkdir(parents=True, exist_ok=True)
 
     final_specs: List[str] = []
     multi_specs: List[str] = []
@@ -111,102 +82,71 @@ def _build_from_samples(samples: List[Dict[str, str]], db_dir: Path) -> None:
 
         env_out = db_dir / f"{module}_envdb"
         atom_env_csv = env_out / f"{module}_atom_env.csv"
-        multi_prefix = db_dir / f"{module}_multiatom_observed"
+        multi_prefix = env_out / f"{module}_multiatom_observed"
 
-        # Internal defaults are intentionally fixed to keep user interface minimal.
-        _run(
-            [
-                python,
-                str(envkey_script),
-                "--mol",
-                str(mol),
-                "--lmp",
-                str(lmp),
-                "--module",
-                module,
-                "--outdir",
-                str(env_out),
-            ]
+        # invoke env_build
+        build_mapping(
+            structure_path=mol,
+            out_dir=env_out,
+            module=module,
+            lmp_path=lmp,
+            hop_depth=INTERNAL_HOP_DEPTH,
         )
 
-        _run(
-            [
-                python,
-                str(extract_script),
-                "--lmp",
-                str(lmp),
-                "--atom-env-csv",
-                str(atom_env_csv),
-                "--out-prefix",
-                str(multi_prefix),
-            ]
+        # invoke multi_extract
+        multi_csv, _, _ = extract_multiatom_mapping(
+            lmp_path=lmp,
+            atom_env_csv=atom_env_csv,
+            out_prefix=multi_prefix,
         )
 
         final_specs.append(f"{module}::{atom_env_csv}::{lmp}")
         multi_specs.append(f"{module}::{multi_prefix}.csv")
 
     final_prefix = db_dir / "final_env_keymap"
-    cmd_final = [python, str(final_script), "--out-prefix", str(final_prefix)]
-    for spec in final_specs:
-        cmd_final.extend(["--module-spec", spec])
-    _run(cmd_final)
+    external_final_log = db_dir.parent / "final_env_keymap.log"
 
-    _run(
-        [
-            python,
-            str(hop_script),
-            "--final-env-csv",
-            str(db_dir / "final_env_keymap.csv"),
-            "--hop2-out",
-            str(db_dir / "hop2_env_keymap.csv"),
-            "--hop1-out",
-            str(db_dir / "hop1_env_keymap.csv"),
-            "--hop0-out",
-            str(db_dir / "hop0_env_keymap.csv"),
-        ]
+    # invoke keymap_build
+    final_csv, _, _, _ = build_final_keymap(
+        module_specs=final_specs,
+        out_prefix=final_prefix,
+        out_log=external_final_log,
     )
 
-    cmd_master = [
-        python,
-        str(master_script),
-        "--type-stats-csv",
-        str(db_dir / "final_env_keymap_type_stats.csv"),
-        "--hop0-env-csv",
-        str(db_dir / "hop0_env_keymap.csv"),
-        "--out-prefix",
-        str(db_dir / "multiatom_master_keytype"),
-    ]
-    for spec in multi_specs:
-        cmd_master.extend(["--multiatom-spec", spec])
-    _run(cmd_master)
+    # invoke hop_build
+    hop2_out = hop_dir / "hop2_env_keymap.csv"
+    hop1_out = hop_dir / "hop1_env_keymap.csv"
+    hop0_out = hop_dir / "hop0_env_keymap.csv"
+    build_hop_databases(
+        final_env_csv=final_csv,
+        hop2_out=hop2_out,
+        hop1_out=hop1_out,
+        hop0_out=hop0_out,
+    )
 
+    # invoke multi_build
+    master_out_prefix = db_dir / "multiatom_master_keytype"
+    multi_specs_parsed = [parse_multiatom_spec(s) for s in multi_specs]
+    build_multiatom_master(
+        final_env_csv=final_csv,
+        hop0_env_csv=hop0_out,
+        multiatom_specs=multi_specs_parsed,
+        out_prefix=master_out_prefix,
+        log_file=external_final_log,
+    )
 
 def build_database(samples_root: Path, db_dir: Path) -> None:
     samples = _discover_samples(samples_root)
     _build_from_samples(samples=samples, db_dir=db_dir)
-    _write_manifest(db_dir=db_dir, samples=samples)
     print(f"[DONE] built database from {len(samples)} samples -> {db_dir}")
 
-
 def add_samples(samples_root: Path, db_dir: Path) -> None:
-    existing = _load_manifest(db_dir)
-    new = _discover_samples(samples_root)
-
-    seen_lmp = {entry["lmp"] for entry in existing}
-    merged = list(existing)
-
-    for entry in new:
-        if entry["lmp"] not in seen_lmp:
-            merged.append(entry)
-            seen_lmp.add(entry["lmp"])
-
-    if not merged:
+    samples = _discover_samples(samples_root)
+    if not samples:
         raise ValueError("No samples available to build database.")
 
-    _build_from_samples(samples=merged, db_dir=db_dir)
-    _write_manifest(db_dir=db_dir, samples=merged)
-    print(f"[DONE] merged sample count: {len(merged)} -> {db_dir}")
-
+    _build_from_samples(samples=samples, db_dir=db_dir)
+    print(f"[DONE] rebuilt database from {len(samples)} samples -> {db_dir}")
 
 def parameterize_molecule(mol_path: Path, db_dir: Path, out_path: Path | None = None) -> None:
     mol_path = mol_path.expanduser().resolve()
@@ -217,20 +157,10 @@ def parameterize_molecule(mol_path: Path, db_dir: Path, out_path: Path | None = 
     out_path = out_path.expanduser().resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    python = sys.executable
-    generate_script = _pipeline_script("lammps_gen.py")
-
-    _run(
-        [
-            python,
-            str(generate_script),
-            "--structure",
-            str(mol_path),
-            "--db-dir",
-            str(db_dir),
-            "--out",
-            str(out_path),
-        ]
+    generate_lammps_data(
+        structure=mol_path,
+        db_dir=db_dir,
+        out=out_path,
     )
 
     print(f"[DONE] parameterized output: {out_path}")

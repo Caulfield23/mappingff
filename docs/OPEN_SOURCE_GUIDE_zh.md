@@ -203,7 +203,7 @@ cd examples/ps_odms7poss_legacy/scripts
 1. 样本发现：扫描 samples 目录下所有 .lammps.lmp，并配对结构文件（.mol/.mol2/.pdb）。
 2. 单模块原子环境提取：为每个模块输出 {module}_atom_env.csv。
 3. 单模块多体观测提取：输出 {module}_multiatom_observed.csv。
-4. 全模块环境合并：输出 final_env_keymap.csv 与 final_env_keymap_type_stats.csv。
+4. 全模块环境合并：输出 final_env_keymap.csv（包含 global_type_ids 多值映射列）。
 5. hop 回退库构建：输出 hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
 6. 多体主库构建：输出 multiatom_master_keytype.csv。
 
@@ -228,15 +228,13 @@ cd examples/ps_odms7poss_legacy/scripts
 
 该表是后续 keymap 合并与 multi_extract 的共同输入。
 
-#### 13.2.2 final_env_keymap.csv / final_env_keymap_type_stats.csv（keymap_build）
+#### 13.2.2 final_env_keymap.csv（keymap_build）
 
 - 读取所有模块 atom_env 行，并按 canonical env_key 合并。
 - 生成全局 key_id（稳定排序后编号）。
 - final_env_keymap.csv 保存 key 级别环境与均值参数。
-- final_env_keymap_type_stats.csv 保存 type 到 key_id 的桥接关系，核心键为：
-  - key_id
-  - module_name
-  - opls_type_id
+- 其中第二列 ``global_type_ids`` 保存 type 到 key_id 的桥接关系（多值，分号分隔），
+  每个值格式为 ``segmentX_xx``。
 
 这张 type_stats 表是后续 multi_build 的关键跨表桥。
 
@@ -257,8 +255,8 @@ cd examples/ps_odms7poss_legacy/scripts
 
 第一次跨表：模块 type -> 全局 key_id
 
-- 来源表：final_env_keymap_type_stats.csv
-- 查询键：(module_name, opls_type_id)
+- 来源表：final_env_keymap.csv 的 ``global_type_ids`` 列
+- 查询键：``segmentX_xx``（由模块名和 opls_type_id 拼接）
 - 结果：key_id
 
 第二次跨表：key_id -> key 等价类（key_type slot）
@@ -338,8 +336,8 @@ cd examples/ps_odms7poss_legacy/scripts
 ### 13.4 跨表查询键一览（速查）
 
 1. 模块原子类型 -> 全局 key_id
-  - 表：final_env_keymap_type_stats.csv
-  - 键：(module_name, opls_type_id)
+  - 表：final_env_keymap.csv
+  - 键：global_type_ids 中的 ``segmentX_xx``
 
 2. 全局 key_id -> 等价 key class
   - 表：hop0_env_keymap.csv

@@ -5,11 +5,13 @@ This script maps per-module ``lmp_type_tuple`` values into global ``key_type_tup
 indices and merges rows by interaction kind and normalized key tuple.
 """
 
-import argparse
 import csv
 import json
 from collections import defaultdict
 from pathlib import Path
+
+
+INTERACTION_ORDER = {"bond": 0, "angle": 1, "dihedral": 2, "improper": 3}
 
 
 class DSU:
@@ -59,21 +61,22 @@ def _canonicalize_key_type_tuple(interaction_kind: str, key_type_tuple):
     return [center] + others
 
 
-def load_type_to_keyid(type_stats_csv: Path):
-    if not type_stats_csv.exists():
-        raise FileNotFoundError(f"Type-stats file not found: {type_stats_csv}")
+def load_type_to_keyid(final_env_csv: Path):
+    if not final_env_csv.exists():
+        raise FileNotFoundError(f"Final env CSV not found: {final_env_csv}")
 
     mapping = {}
-    with type_stats_csv.open("r", encoding="utf-8") as f:
+    with final_env_csv.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             key_id = int(row["key_id"])
-            module_name = row["module_name"]
-            opls_type_id = int(row["opls_type_id"])
-            mapping[(module_name, opls_type_id)] = key_id
+            raw = str(row.get("global_type_ids", "") or "")
+            for global_type in [x.strip() for x in raw.split(";") if x.strip()]:
+                if global_type not in mapping or key_id < mapping[global_type]:
+                    mapping[global_type] = key_id
 
     if not mapping:
-        raise ValueError(f"Type-stats file is empty: {type_stats_csv}")
+        raise ValueError(f"Final env CSV has no global_type_ids: {final_env_csv}")
     return mapping
 
 
@@ -117,7 +120,6 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
             "term_count": 0,
             "source_term_types": set(),
             "source_modules": set(),
-            "coeff_counter": defaultdict(int),
         }
     )
 
@@ -142,7 +144,7 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
                 key_type_tuple = []
                 missing = False
                 for type_id in lmp_type_tuple:
-                    lookup_key = (module_name, int(type_id))
+                    lookup_key = f"{module_name}_{int(type_id)}"
                     if lookup_key not in type_to_keyid:
                         missing = True
                         missing_type_refs.append(
@@ -165,10 +167,25 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
                     interaction_kind, key_type_tuple
                 )
 
+                # Merge only when coefficient parameter sets are exactly the same.
+                # This prevents collapsing records that share hop0-equivalent key classes
+                # but correspond to different force-field parameters.
+                normalized_coeff_sets = []
+                if isinstance(coeff_param_sets, list):
+                    for coeff in coeff_param_sets:
+                        if isinstance(coeff, list):
+                            normalized_coeff_sets.append(tuple(str(x) for x in coeff))
+                coeff_signature = json.dumps(
+                    [list(x) for x in sorted(set(normalized_coeff_sets))],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+
                 key = (
                     interaction_kind,
                     n_atoms,
                     json.dumps(key_type_tuple, separators=(",", ":")),
+                    coeff_signature,
                 )
                 node = merged[key]
                 node["term_count"] += term_count
@@ -176,25 +193,9 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
                 for term_type in source_term_types:
                     node["source_term_types"].add(int(term_type))
 
-                if isinstance(coeff_param_sets, list):
-                    for coeff in coeff_param_sets:
-                        if isinstance(coeff, list):
-                            coeff_tuple = tuple(str(x) for x in coeff)
-                            node["coeff_counter"][coeff_tuple] += max(term_count, 1)
-
     rows = []
-    for (interaction_kind, n_atoms, key_type_tuple_json), payload in merged.items():
-        coeff_counter = payload["coeff_counter"]
-        if coeff_counter:
-            mode_coeff = sorted(
-                coeff_counter.items(),
-                key=lambda kv: (-kv[1], kv[0]),
-            )[
-                0
-            ][0]
-            coeff_param_sets = json.dumps([list(mode_coeff)], ensure_ascii=False)
-        else:
-            coeff_param_sets = json.dumps([], ensure_ascii=False)
+    for (interaction_kind, n_atoms, key_type_tuple_json, coeff_signature), payload in merged.items():
+        coeff_param_sets = coeff_signature
 
         rows.append(
             {
@@ -212,7 +213,7 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
 
     rows.sort(
         key=lambda r: (
-            r["interaction_kind"],
+            INTERACTION_ORDER.get(r["interaction_kind"], 99),
             r["key_type_tuple"],
             r["coeff_param_sets"],
         )
@@ -234,51 +235,58 @@ def write_csv(path: Path, rows):
             writer.writerow(row)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Merge observed multiatom data into a global key_type-indexed master table."
-    )
-    parser.add_argument(
-        "--type-stats-csv",
-        required=True,
-        help="Path to final_env_keymap_type_stats.csv",
-    )
-    parser.add_argument(
-        "--multiatom-spec",
-        action="append",
-        required=True,
-        help="Module input in the form module_name::multiatom_csv (repeatable).",
-    )
-    parser.add_argument(
-        "--hop0-env-csv",
-        required=True,
-        help="Path to hop0_env_keymap.csv (used for key_id equivalence classes).",
-    )
-    parser.add_argument(
-        "--out-prefix",
-        required=True,
-        help="Output prefix (without extension); writes .csv.",
-    )
-    args = parser.parse_args()
+def append_merge_conflict_log(log_path: Path, rows):
+    # Same key_type_tuple with multiple coeff sets indicates parameter split kept intentionally.
+    grouped = defaultdict(set)
+    for row in rows:
+        base_key = (row["interaction_kind"], row["key_type_tuple"])
+        grouped[base_key].add(row["coeff_param_sets"])
 
-    type_stats_csv = Path(args.type_stats_csv).expanduser()
-    hop0_env_csv = Path(args.hop0_env_csv).expanduser()
-    multiatom_specs = [parse_multiatom_spec(s) for s in args.multiatom_spec]
-    out_prefix = Path(args.out_prefix).expanduser()
+    conflicts = [
+        (kind, key_type_tuple, sorted(coeffs))
+        for (kind, key_type_tuple), coeffs in grouped.items()
+        if len(coeffs) > 1
+    ]
+    conflicts.sort(key=lambda x: (INTERACTION_ORDER.get(x[0], 99), x[1]))
 
-    type_to_keyid = load_type_to_keyid(type_stats_csv)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write("\n")
+        f.write("=== Multiatom merge check ===\n")
+        f.write(
+            "rule: merge only when interaction_kind + key_type_tuple + coeff_param_sets are all identical\n"
+        )
+        f.write(f"rows in multiatom master: {len(rows)}\n")
+        f.write(f"key_type groups with multiple coeff sets: {len(conflicts)}\n")
+
+        if conflicts:
+            f.write("--- examples (up to 20) ---\n")
+            for idx, (kind, key_type_tuple, coeffs) in enumerate(conflicts[:20], start=1):
+                f.write(
+                    f"{idx}. kind={kind} key_type_tuple={key_type_tuple} coeff_set_count={len(coeffs)}\n"
+                )
+                for coeff in coeffs[:3]:
+                    f.write(f"    coeff={coeff}\n")
+
+
+def build_multiatom_master(
+    final_env_csv: Path,
+    hop0_env_csv: Path,
+    multiatom_specs,
+    out_prefix: Path,
+    log_file: Path | None = None,
+):
+    type_to_keyid = load_type_to_keyid(final_env_csv)
     key_to_class = load_hop0_key_classes(hop0_env_csv)
     rows, missing_type_refs = build_master(type_to_keyid, key_to_class, multiatom_specs)
 
+    out_prefix = Path(out_prefix).expanduser()
     out_csv = out_prefix.with_suffix(".csv")
-
     write_csv(out_csv, rows)
 
-    print("Done:")
-    print(f"- CSV: {out_csv}")
-    print(f"- merged rows: {len(rows)}")
-    print(f"- missing type refs: {len(missing_type_refs)}")
+    if log_file is not None:
+        append_merge_conflict_log(Path(log_file).expanduser(), rows)
+
+    return out_csv, rows, missing_type_refs
 
 
-if __name__ == "__main__":
-    main()
