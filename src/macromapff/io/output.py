@@ -13,7 +13,7 @@ def write_atom_env_csv(out_dir: Path, module: str, atom_rows):
     """Write one module's atom environment table to CSV."""
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    csv_path = out_dir / f"{module}_atom_env.csv"
+    csv_path = out_dir / f"{module}_AtomMap.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,

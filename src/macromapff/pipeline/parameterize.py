@@ -19,11 +19,11 @@ from macromapff.io import write_missing_env_log
 
 INTERNAL_HOP_DEPTH = 2
 INTERNAL_FALLBACK_HOPS = (1, 0)
-DB_FINAL_ENV = "final_env_keymap.csv"
-DB_HOP2_ENV = "hop_env/hop2_env_keymap.csv"
-DB_HOP1_ENV = "hop_env/hop1_env_keymap.csv"
-DB_HOP0_ENV = "hop_env/hop0_env_keymap.csv"
-DB_MULTIATOM = "multiatom_master_keytype.csv"
+DB_FINAL_ENV = "Global_AtomMap.csv"
+DB_HOP2_ENV = "hop_env/hop2_KeyMap.csv"
+DB_HOP1_ENV = "hop_env/hop1_KeyMap.csv"
+DB_HOP0_ENV = "hop_env/hop0_KeyMap.csv"
+DB_MULTIATOM = "Global_BondedTerms.csv"
 
 
 def build_atom_types(
@@ -148,7 +148,7 @@ class LammpsGenerator:
         db_paths = _resolve_db_paths(self.db_dir)
 
         build_log_path = (
-            self.build_log if self.build_log is not None else out.parent / "build.log"
+            self.build_log if self.build_log is not None else out.parent / "parameterize.log"
         )
         atom_keytype_map_path = (
             self.atom_keytype_map

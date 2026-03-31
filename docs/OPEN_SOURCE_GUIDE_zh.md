@@ -218,12 +218,12 @@ cd examples/ps_odms7poss_legacy/scripts
 
 阶段 A：build-db（构建数据库）
 
-1. 样本发现：扫描 samples 目录下所有 .lammps.lmp，并配对结构文件（.mol/.mol2/.pdb）。
-2. 单模块原子环境提取：为每个模块输出 {module}_atom_env.csv。
-3. 单模块多体观测提取：输出 {module}_multiatom_observed.csv。
-4. 全模块环境合并：输出 final_env_keymap.csv（包含 global_type_ids 多值映射列）。
-5. hop 回退库构建：输出 hop_env/hop2_env_keymap.csv、hop_env/hop1_env_keymap.csv、hop_env/hop0_env_keymap.csv。
-6. 多体主库构建：输出 multiatom_master_keytype.csv。
+1. 样本发现：扫描 samples 目录下所有 .lmp，并配对结构文件（.mol/.mol2/.pdb）。
+2. 单模块原子环境提取：为每个模块输出 {module}_AtomMap.csv。
+3. 单模块多体观测提取：输出 {module}_BondedTerms.csv。
+4. 全模块环境合并：输出 Global_AtomMap.csv（包含 global_type_ids 多值映射列）。
+5. hop 回退库构建：输出 hop_env/hop2_KeyMap.csv、hop_env/hop1_KeyMap.csv、hop_env/hop0_KeyMap.csv。
+6. 多体主库构建：输出 Global_BondedTerms.csv。
 
 阶段 B：parameterize（generate 新分子映射并写出 LAMMPS）
 
@@ -234,9 +234,9 @@ cd examples/ps_odms7poss_legacy/scripts
 
 ### 13.2 build-db 的数据流细节
 
-#### 13.2.1 {module}_atom_env.csv（atom_env）
+#### 13.2.1 {module}_AtomMap.csv（atom_env）
 
-- 输入：模块结构文件 + 对应 .lammps.lmp。
+- 输入：模块结构文件 + 对应 .lmp。
 - 对每个 atom 生成 env_key（当前最多 hop2），并保留该 atom 在样本中的 OPLS type 与 LJ 参数。
 - 输出核心字段：
   - module, atom_index, atom_name
@@ -246,19 +246,19 @@ cd examples/ps_odms7poss_legacy/scripts
 
 该表是后续 keymap 合并与 multiatom_observed 的共同输入。
 
-#### 13.2.2 final_env_keymap.csv（keymap_hop）
+#### 13.2.2 Global_AtomMap.csv（keymap_hop）
 
 - 读取所有模块 atom_env 行，并按 canonical env_key 合并。
 - 生成全局 key_id（稳定排序后编号）。
-- final_env_keymap.csv 保存 key 级别环境与均值参数。
+- Global_AtomMap.csv 保存 key 级别环境与均值参数。
 - 其中第二列 ``global_type_ids`` 保存 type 到 key_id 的桥接关系（多值，分号分隔），
-  每个值格式为 ``segmentX_xx``。
+  每个值格式为 ``module_xx``。
 
 这张 type_stats 表是后续 multiatom_master 的关键跨表桥。
 
-#### 13.2.3 hop2/hop1/hop0_env_keymap.csv（keymap_hop）
+#### 13.2.3 hop2/hop1/hop0_KeyMap.csv（keymap_hop）
 
-- 从 final_env_keymap.csv 聚合得到三个粒度的回退库。
+- 从 Global_AtomMap.csv 聚合得到三个粒度的回退库。
 - 每行包含：
   - source_key_ids（该聚合行由哪些 key_id 合并而来）
   - charge_mean, sigma_mean, epsilon_mean, mass_mean
@@ -267,29 +267,29 @@ cd examples/ps_odms7poss_legacy/scripts
 
 其中 hop0 的 source_key_ids 在 multiatom_master 中用于构建 key 等价类（见 13.2.4）。
 
-#### 13.2.4 multiatom_master_keytype.csv（multiatom_master）
+#### 13.2.4 Global_BondedTerms.csv（multiatom_master）
 
 该步骤发生两次跨表映射：
 
 第一次跨表：模块 type -> 全局 key_id
 
-- 来源表：final_env_keymap.csv 的 ``global_type_ids`` 列
+- 来源表：Global_AtomMap.csv 的 ``global_type_ids`` 列
 - 查询键：``segmentX_xx``（由模块名和 opls_type_id 拼接）
 - 结果：key_id
 
 第二次跨表：key_id -> key 等价类（key_type slot）
 
-- 来源表：hop0_env_keymap.csv
+- 来源表：hop0_KeyMap.csv
 - 用 source_key_ids 通过并查集（DSU）求连通分量
 - 结果：每个 key_id 映射到一个 key class（如 [12, 29, 31]）
 
-最后将模块观测表中的 lmp_type_tuple 转成 key_type_tuple（每个位置是允许 key 集合），并按 interaction_kind + key_type_tuple 合并，得到 multiatom_master_keytype.csv。
+最后将模块观测表中的 lmp_type_tuple 转成 key_type_tuple（每个位置是允许 key 集合），并按 interaction_kind + key_type_tuple 合并，得到 Global_BondedTerms.csv。
 
 ### 13.3 parameterize(generate) 的数据流细节
 
 #### 13.3.1 原子项匹配（atom_typing_core）
 
-输入库：hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
+输入库：hop2_KeyMap.csv、hop1_KeyMap.csv、hop0_KeyMap.csv。
 
 预处理：每个 hop 库都建两套索引
 
@@ -320,7 +320,7 @@ cd examples/ps_odms7poss_legacy/scripts
 
 #### 13.3.2 多体项匹配（multiatom_match_core）
 
-输入库：multiatom_master_keytype.csv。
+输入库：Global_BondedTerms.csv。
 
 读取后构建倒排索引：
 
@@ -354,24 +354,24 @@ cd examples/ps_odms7poss_legacy/scripts
 ### 13.4 跨表查询键一览（速查）
 
 1. 模块原子类型 -> 全局 key_id
-  - 表：final_env_keymap.csv
+  - 表：Global_AtomMap.csv
   - 键：global_type_ids 中的 ``segmentX_xx``
 
 2. 全局 key_id -> 等价 key class
-  - 表：hop0_env_keymap.csv
+  - 表：hop0_KeyMap.csv
   - 键：source_key_ids 连通关系
 
 3. 新分子 atom 环境 -> 原子参数/候选 key_ids
-  - 表：hop2/hop1/hop0_env_keymap.csv
+  - 表：hop2/hop1/hop0_KeyMap.csv
   - 键：先 env_key，后 structured tuple
 
 4. term 的 key_tuple -> 多体 coeff
-  - 表：multiatom_master_keytype.csv
+  - 表：Global_BondedTerms.csv
   - 键：interaction_kind + key_type_tuple（slot 集合匹配）
 
 ### 13.5 人工核查推荐顺序
 
-1. 先看 build.log：missing/ambiguous/cache 命中率。
+1. 先看 parameterize.log：missing/ambiguous/cache 命中率。
 2. 看 atom_index_key_types.csv：候选 key 是否合理。
-3. 看 final_env_keymap.csv 与 hop2/hop1/hop0：回退层是否符合预期。
-4. 看 multiatom_master_keytype.csv：关键 interaction 的 key_type_tuple 与 coeff 是否覆盖。
+3. 看 Global_AtomMap.csv 与 hop2/hop1/hop0：回退层是否符合预期。
+4. 看 Global_BondedTerms.csv：关键 interaction 的 key_type_tuple 与 coeff 是否覆盖。

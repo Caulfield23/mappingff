@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict
 from typing import List
@@ -29,42 +30,36 @@ class Workflow:
         if not root.exists() or not root.is_dir():
             raise FileNotFoundError(f"Samples folder not found: {root}")
 
-        lmp_files = sorted(root.rglob("*.lammps.lmp"))
+        lmp_files = sorted(root.rglob("*.lmp"))
         if not lmp_files:
-            raise ValueError(f"No .lammps.lmp files found under: {root}")
+            raise ValueError(f"No .lmp files found under: {root}")
 
-        structure_by_stem: Dict[str, List[Path]] = {}
+        structure_by_dir: Dict[Path, List[Path]] = defaultdict(list)
         for pattern in ("*.mol", "*.mol2", "*.pdb"):
             for structure in root.rglob(pattern):
-                structure_by_stem.setdefault(structure.stem, []).append(structure)
+                structure_by_dir[structure.parent].append(structure)
 
         discovered: List[Dict[str, str]] = []
         used_module_ids = set()
 
         for lmp in lmp_files:
-            stem = lmp.name.replace(".lammps.lmp", "")
-
-            candidates = []
-            for ext in (".mol", ".mol2", ".pdb"):
-                candidates.extend(
-                    [
-                        lmp.parent / f"{stem}{ext}",
-                        lmp.parent.parent / f"{stem}{ext}",
-                        lmp.parent.parent.parent / f"{stem}{ext}",
-                    ]
-                )
-            structure_path = next((p for p in candidates if p.exists()), None)
-            if structure_path is None and stem in structure_by_stem:
-                structure_path = sorted(structure_by_stem[stem], key=lambda p: len(str(p)))[0]
+            search_dirs = [lmp.parent, lmp.parent.parent, lmp.parent.parent.parent]
+            structure_path = None
+            for folder in search_dirs:
+                choices = sorted(structure_by_dir.get(folder, []))
+                if choices:
+                    structure_path = choices[0]
+                    break
             if structure_path is None:
                 raise FileNotFoundError(
-                    f"Cannot find matching structure (.mol/.mol2/.pdb) for {lmp}"
+                    f"Cannot find structure file (.mol/.mol2/.pdb) for {lmp}"
                 )
 
-            module_id = stem
+            module_seed = lmp.parent.name or lmp.stem
+            module_id = module_seed
             idx = 2
             while module_id in used_module_ids:
-                module_id = f"{stem}_{idx}"
+                module_id = f"{module_seed}_{idx}"
                 idx += 1
             used_module_ids.add(module_id)
 
@@ -119,9 +114,9 @@ class Workflow:
             mol = Path(s["mol"])
             lmp = Path(s["lmp"])
 
-            env_out = self.db_dir / f"{module}_envdb"
-            atom_env_csv = env_out / f"{module}_atom_env.csv"
-            multi_prefix = env_out / f"{module}_multiatom_observed"
+            env_out = self.db_dir / f"{module}_env"
+            atom_env_csv = env_out / f"{module}_AtomMap.csv"
+            multi_prefix = env_out / f"{module}_BondedTerms"
 
             build_mapping(
                 structure_path=mol,
@@ -137,8 +132,8 @@ class Workflow:
             final_specs.append(f"{module}::{atom_env_csv}::{lmp}")
             multi_specs.append(f"{module}::{multi_prefix}.csv")
 
-        final_prefix = self.db_dir / "final_env_keymap"
-        external_final_log = self.db_dir.parent / "final_env_keymap.log"
+        final_prefix = self.db_dir / "Global_AtomMap"
+        external_final_log = self.db_dir.parent / "build.log"
 
         keymap_builder = KeymapBuilder(final_specs)
         final_csv, _, _, _ = keymap_builder.build(
@@ -146,9 +141,9 @@ class Workflow:
             out_log=external_final_log,
         )
 
-        hop2_out = self.hop_dir / "hop2_env_keymap.csv"
-        hop1_out = self.hop_dir / "hop1_env_keymap.csv"
-        hop0_out = self.hop_dir / "hop0_env_keymap.csv"
+        hop2_out = self.hop_dir / "hop2_KeyMap.csv"
+        hop1_out = self.hop_dir / "hop1_KeyMap.csv"
+        hop0_out = self.hop_dir / "hop0_KeyMap.csv"
         hop_builder = HopDatabaseBuilder(final_env_csv=final_csv)
         hop_builder.build(
             hop2_out=hop2_out,
@@ -156,7 +151,7 @@ class Workflow:
             hop0_out=hop0_out,
         )
 
-        master_out_prefix = self.db_dir / "multiatom_master_keytype"
+        master_out_prefix = self.db_dir / "Global_BondedTerms"
         multi_specs_parsed = [parse_multiatom_spec(s) for s in multi_specs]
         multi_builder = MultiatomMasterBuilder(
             final_env_csv=final_csv,
@@ -179,7 +174,7 @@ def main() -> None:
 
     p_build = sub.add_parser(
         "build-db",
-        help="Scan a folder of sample .lammps.lmp files and build merged databases.",
+        help="Scan a folder of sample .lmp files and build merged databases.",
     )
     p_build.add_argument("samples", type=Path, help="Folder containing sample data")
     p_build.add_argument(

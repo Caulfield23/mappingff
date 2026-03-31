@@ -46,13 +46,13 @@
 - `src/macromapff/pipeline/__init__.py`
   - pipeline 统一导出入口，workflow 通过该入口组织流程组件。
 - `src/macromapff/pipeline/atom_env.py`
-  - 构建单模块 `*_atom_env.csv`。
+  - 构建单模块 `*_AtomMap.csv`。
 - `src/macromapff/pipeline/keymap_hop.py`
-  - 合并多模块 env_key，输出 `final_env_keymap.csv`，并构建 hop2/hop1/hop0 回退映射表。
+  - 合并多模块 env_key，输出 `Global_AtomMap.csv`，并构建 hop2/hop1/hop0 回退映射表。
 - `src/macromapff/pipeline/multiatom_observed.py`
-  - 提取 `*_multiatom_observed.csv`。
+  - 提取 `*_BondedTerms.csv`。
 - `src/macromapff/pipeline/multiatom_master.py`
-  - 合并多模块多体观测，输出 `multiatom_master_keytype.csv`。
+  - 合并多模块多体观测，输出 `Global_BondedTerms.csv`。
 - `src/macromapff/pipeline/parameterize.py`
   - parameterize 阶段主程序，生成参数化 LAMMPS data（含原子匹配与多体匹配流程封装）。
 

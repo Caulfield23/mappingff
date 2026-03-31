@@ -52,11 +52,11 @@ def test_standard_workflow_with_fixed_dataset() -> None:
     assert build.returncode == 0, build.stdout + "\n" + build.stderr
 
     expected_db_files = [
-        db_dir / "final_env_keymap.csv",
-        db_dir / "hop_env" / "hop2_env_keymap.csv",
-        db_dir / "hop_env" / "hop1_env_keymap.csv",
-        db_dir / "hop_env" / "hop0_env_keymap.csv",
-        db_dir / "multiatom_master_keytype.csv",
+        db_dir / "Global_AtomMap.csv",
+        db_dir / "hop_env" / "hop2_KeyMap.csv",
+        db_dir / "hop_env" / "hop1_KeyMap.csv",
+        db_dir / "hop_env" / "hop0_KeyMap.csv",
+        db_dir / "Global_BondedTerms.csv",
     ]
     for path in expected_db_files:
         assert path.exists(), f"Expected database artifact missing: {path}"
