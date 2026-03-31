@@ -7,45 +7,63 @@
 - `src/macromapff/__init__.py`
   - 包元信息与版本导出。
 - `src/macromapff/cli.py`
-  - 命令行入口，负责解析子命令并调用工作流接口。
-- `src/macromapff/workflow.py`
-  - 高层编排逻辑：发现样本、构建数据库、调用 parameterize 产出 LAMMPS 数据。
+  - 单文件入口：包含 CLI 解析 + `Workflow` 编排类。
+  - `Workflow.discover_samples(...)` 作为类内方法负责样本发现与输入资产路径匹配。
+
+## domain 层
+
+- `src/macromapff/domain/__init__.py`
+  - domain 统一导出入口，外层优先从该入口导入核心逻辑能力。
+
+- `src/macromapff/domain/env.py`
+  - env_key 规范化与拆分工具。
+- `src/macromapff/domain/env_features.py`
+  - 基于 RDKit 的原子环境特征提取。
+- `src/macromapff/domain/atom_typing_core.py`
+  - 原子类型匹配的纯逻辑。
+- `src/macromapff/domain/term_enumeration.py`
+  - 枚举 bonds/angles/dihedrals/impropers。
+- `src/macromapff/domain/multiatom_match_core.py`
+  - 多体匹配纯逻辑与 type 映射构建。
+- `src/macromapff/domain/multiatom_observed.py`
+  - 多体观测映射构建逻辑。
+- `src/macromapff/domain/keymap_merge.py`
+  - env_key 合并与统计逻辑。
+- `src/macromapff/domain/multiatom_master_merge.py`
+  - 多体主库合并逻辑。
+
+## io 层
+
+- `src/macromapff/io/input.py`
+  - 仅负责输入读取与解析：结构读取、LAMMPS 解析、数据库 CSV 加载。
+- `src/macromapff/io/output.py`
+  - 仅负责输出写出：atom_env、keymap、multiatom、LAMMPS data 等结果文件。
+- `src/macromapff/io/log.py`
+  - 仅负责日志输出：build/missing、keymap merge、多体匹配与冲突日志。
 
 ## pipeline 层
 
 - `src/macromapff/pipeline/__init__.py`
-  - pipeline 包声明与迁移说明。
-- `src/macromapff/pipeline/env_build.py`
-  - 从结构文件 + LAMMPS 数据构建原子环境特征，输出每模块 `*_atom_env.csv`。
-- `src/macromapff/pipeline/keymap_build.py`
-  - 合并多模块 atom env，生成全局 `final_env_keymap.csv` 与合并日志。
-- `src/macromapff/pipeline/hop_build.py`
-  - 从 final keymap 构建 hop2/hop1/hop0 回退映射表。
-- `src/macromapff/pipeline/multi_extract.py`
-  - 从单模块 LAMMPS 拓扑提取 bond/angle/dihedral/improper 观测项，输出 `*_multiatom_observed.csv`。
-- `src/macromapff/pipeline/multi_build.py`
-  - 合并多模块 multiatom 观测数据，映射到全局 key_type，输出 `multiatom_master_keytype.csv`。
-- `src/macromapff/pipeline/lammps_gen.py`
-  - parameterize 阶段主程序：读数据库并为目标分子生成参数化 LAMMPS data 文件。
-
-## pipeline/core 公共能力
-
-- `src/macromapff/pipeline/core/__init__.py`
-  - core 子包声明。
-- `src/macromapff/pipeline/core/env.py`
-  - 环境键（env_key）规范化、拆分与结构化索引相关工具。
-- `src/macromapff/pipeline/core/atom_match.py`
-  - 原子级匹配逻辑：按 env_key 精确匹配并执行 hop 回退。
-- `src/macromapff/pipeline/core/multi_match.py`
-  - 多体项匹配逻辑：按 interaction kind + key_type_tuple 匹配参数。
-- `src/macromapff/pipeline/core/lammps_parse.py`
-  - LAMMPS 数据文件解析能力（Masses、Atoms、拓扑等）。
-- `src/macromapff/pipeline/core/lammps_write.py`
-  - 将匹配结果写回 LAMMPS data 文件格式。
+  - pipeline 统一导出入口，workflow 通过该入口组织流程组件。
+- `src/macromapff/pipeline/atom_env.py`
+  - 构建单模块 `*_atom_env.csv`。
+- `src/macromapff/pipeline/keymap_hop.py`
+  - 合并多模块 env_key，输出 `final_env_keymap.csv`，并构建 hop2/hop1/hop0 回退映射表。
+- `src/macromapff/pipeline/multiatom_observed.py`
+  - 提取 `*_multiatom_observed.csv`。
+- `src/macromapff/pipeline/multiatom_master.py`
+  - 合并多模块多体观测，输出 `multiatom_master_keytype.csv`。
+- `src/macromapff/pipeline/parameterize.py`
+  - parameterize 阶段主程序，生成参数化 LAMMPS data（含原子匹配与多体匹配流程封装）。
 
 ## 典型调用链
 
+- 统一导入约定：
+  - IO 能力统一从 `macromapff.io` 导入。
+  - 编排能力统一从 `macromapff.pipeline` 导入。
+  - 纯逻辑能力统一从 `macromapff.domain` 导入（优先）。
+
 - build-db:
-  - `cli.py` -> `workflow.py` -> `env_build.py` -> `multi_extract.py` -> `keymap_build.py` -> `hop_build.py` -> `multi_build.py`
+  - `cli.py(Workflow)` -> `atom_env.py` -> `multiatom_observed.py` -> `keymap_hop.py` -> `multiatom_master.py`
 - parameterize:
-  - `cli.py` -> `workflow.py` -> `lammps_gen.py` -> `core/atom_match.py` + `core/multi_match.py` + `core/lammps_write.py`
+  - `cli.py(Workflow)` -> `parameterize.py` + `io/output.py`

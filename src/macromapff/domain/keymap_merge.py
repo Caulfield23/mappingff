@@ -1,38 +1,8 @@
 #!/usr/bin/env python3
-"""Build a final merged atom-environment keymap across modules.
-
-Inputs:
-- Repeated ``--module-spec`` values in the form
-    ``module_name::atom_env_csv::lammps_data``
-
-Outputs:
-- ``{out_prefix}.csv``: merged final keymap
-- ``{out_prefix}.log``: merge diagnostics
-"""
-
-import csv
-import json
 import math
 from collections import Counter, defaultdict
-from pathlib import Path
 
-from macromapff.pipeline.core.env import (
-    ENV_SPLIT_COLUMNS,
-    canonicalize_env_key,
-    split_env_key_columns,
-)
-from macromapff.pipeline.core.lammps_parse import parse_lammps_masses
-
-
-def parse_module_spec(spec: str):
-    parts = spec.split("::")
-    if len(parts) != 3:
-        raise ValueError(
-            f"Invalid --module-spec format: {spec}\n"
-            f"Expected: module_name::atom_env_csv::lammps_data"
-        )
-    module, atom_env_csv, lmp_data = parts
-    return module.strip(), Path(atom_env_csv).expanduser(), Path(lmp_data).expanduser()
+from macromapff.domain.env import canonicalize_env_key, split_env_key_columns
 
 
 def _new_stats():
@@ -69,19 +39,13 @@ def _mean_std(sum_v, sum2_v, n):
     return mean, math.sqrt(var)
 
 
-def _fmt_float(v):
-    if v is None:
-        return ""
-    return f"{v:.8f}"
-
-
 def _round6(v):
     if v is None:
         return None
     return round(float(v), 6)
 
 
-def build_final_map(module_specs):
+def build_final_map(module_specs, mass_map_by_module):
     merged = {}
 
     for module_name, atom_env_csv, lmp_data in module_specs:
@@ -90,9 +54,11 @@ def build_final_map(module_specs):
         if not lmp_data.exists():
             raise FileNotFoundError(f"LAMMPS data file not found: {lmp_data}")
 
-        mass_map = parse_lammps_masses(lmp_data)
+        mass_map = mass_map_by_module[module_name]
 
         with atom_env_csv.open("r", encoding="utf-8") as f:
+            import csv
+
             reader = csv.DictReader(f)
             for row in reader:
                 env_key = canonicalize_env_key(row["env_key"], deep_normalize=False)
@@ -240,113 +206,3 @@ def finalize_records(merged):
             )
 
     return final_rows, type_rows
-
-
-def write_csv(path: Path, rows, fieldnames):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def write_log(path: Path, module_specs, final_rows, type_rows):
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    lines = []
-    lines.append("=== Final keymap merge log ===")
-    lines.append(f"modules: {len(module_specs)}")
-    for module_name, atom_env_csv, lmp_data in module_specs:
-        lines.append(f"  - {module_name}: atom_env={atom_env_csv}, lmp={lmp_data}")
-
-    lines.append("")
-    lines.append(f"total keys: {len(final_rows)}")
-
-    multi_type_keys = [r for r in final_rows if r["n_lmp_types"] > 1]
-    lines.append(f"keys with multiple LMP types: {len(multi_type_keys)}")
-
-    lines.append("")
-    lines.append("notes: types = number of distinct LMP atom types merged into this key")
-    lines.append("notes: rows = number of atom rows merged for this key across all modules")
-    lines.append("--- key-level stats (mean ± std) ---")
-    for row in final_rows:
-        lines.append(
-            f"key_id={row['key_id']} "
-            f"types={row['n_lmp_types']} rows={row['n_rows']} "
-            f"charge={_fmt_float(row['charge_mean'])}±{_fmt_float(row['charge_std'])} "
-            f"sigma={_fmt_float(row['sigma_mean'])}±{_fmt_float(row['sigma_std'])} "
-            f"epsilon={_fmt_float(row['epsilon_mean'])}±{_fmt_float(row['epsilon_std'])} "
-            f"mass={_fmt_float(row['mass_mean'])}±{_fmt_float(row['mass_std'])}"
-        )
-
-    lines.append("")
-    lines.append("notes: multi-type key details is atom-type merge detail only (not bond/angle/dihedral/improper)")
-    lines.append("--- multi-type key details ---")
-    type_rows_by_key = defaultdict(list)
-    for tr in type_rows:
-        type_rows_by_key[tr["key_id"]].append(tr)
-
-    for row in multi_type_keys:
-        lines.append(f"key_id={row['key_id']} lmp_type_ids=[{row['lmp_type_ids']}]")
-        for tr in sorted(
-            type_rows_by_key[row["key_id"]],
-            key=lambda x: (x["module_name"], x["opls_type_id"]),
-        ):
-            lines.append(
-                f"    type={tr['module_name']}:{tr['opls_type_id']}({tr['opls_type_name']}), n={tr['n_rows']}, "
-                f"charge={_fmt_float(tr['charge_mean'])}±{_fmt_float(tr['charge_std'])}, "
-                f"sigma={_fmt_float(tr['sigma_mean'])}±{_fmt_float(tr['sigma_std'])}, "
-                f"epsilon={_fmt_float(tr['epsilon_mean'])}±{_fmt_float(tr['epsilon_std'])}, "
-                f"mass={_fmt_float(tr['mass_mean'])}±{_fmt_float(tr['mass_std'])}, "
-                f"modules={tr['modules']}"
-            )
-
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def build_final_keymap(module_specs, out_prefix: Path, out_log: Path | None = None):
-    parsed_specs = []
-    for spec in module_specs:
-        if isinstance(spec, str):
-            parsed_specs.append(parse_module_spec(spec))
-        else:
-            parsed_specs.append(spec)
-
-    merged = build_final_map(parsed_specs)
-    final_rows, type_rows = finalize_records(merged)
-
-    out_prefix = Path(out_prefix).expanduser()
-    final_csv = out_prefix.with_suffix(".csv")
-    final_log = (
-        Path(out_log).expanduser() if out_log is not None else out_prefix.with_suffix(".log")
-    )
-
-    write_csv(
-        final_csv,
-        final_rows,
-        [
-            "key_id",
-            "global_type_ids",
-            "z",
-            "formal_charge",
-            "aromatic",
-            "hybridization",
-            "degree",
-            "total_hs",
-            "in_ring",
-            "ring_count",
-            "neighbor_sig",
-            "bond_kinds",
-            "charge_mean",
-            "sigma_mean",
-            "epsilon_mean",
-            "mass_mean",
-            "hop1_shell",
-            "hop2_shell",
-        ],
-    )
-    write_log(final_log, parsed_specs, final_rows, type_rows)
-    return final_csv, final_log, final_rows, type_rows
-
-

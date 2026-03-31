@@ -51,13 +51,27 @@ MacroMapFF/
     macromapff/
       __init__.py
       cli.py
+      domain/
+        __init__.py
+        env.py
+        env_features.py
+        atom_typing_core.py
+        term_enumeration.py
+        multiatom_match_core.py
+        multiatom_observed.py
+        keymap_merge.py
+        multiatom_master_merge.py
+      io/
+        __init__.py
+        input.py
+        output.py
+        log.py
       pipeline/
-        env_build.py
-        keymap_build.py
-        hop_build.py
-        multi_extract.py
-        multi_build.py
-        lammps_gen.py
+        atom_env.py
+        keymap_hop.py
+        multiatom_observed.py
+        multiatom_master.py
+        parameterize.py
   tests/
   pyproject.toml
   README.md
@@ -65,7 +79,9 @@ MacroMapFF/
 
 说明：
 
-- 算法脚本已迁移到 `src/macromapff/pipeline/`。
+- 核心算法逻辑放在 `src/macromapff/domain/`，仅处理内存对象，不做文件 IO。
+- 文件解析/序列化放在 `src/macromapff/io/`，负责结构文件与 LAMMPS data 的读写。
+- 流程编排集中在 `src/macromapff/pipeline/`，调用 domain + io 完成完整流程。
 - 历史可运行工程（分子、segments、outputs、legacy scripts）已整体迁入 `examples/ps_odms7poss_legacy/`。
 - 根目录仅保留开源代码与工程化配置，和 example 数据完全隔离。
 
@@ -73,7 +89,7 @@ MacroMapFF/
 
 本次迁移遵循“只改工程组织，不改算法逻辑”：
 
-1. 将历史 Python 脚本从 `scripts/` 迁移到 `src/macromapff/pipeline/`。
+1. 将历史 Python 脚本从 `scripts/` 迁移到 `src/macromapff/`，并按 domain/io/pipeline 分层归位。
 2. 在 `examples/ps_odms7poss_legacy/scripts/` 下保留 legacy 启动器，转发到新包模块。
 3. 新增 `pyproject.toml`，支持 `pip install -e .` 和 `MacroMapFF` 命令。
 4. 新增 CI、Release、pre-commit、LICENSE、README。
@@ -150,10 +166,12 @@ MacroMapFF/
 
 ### 9.1 包命令模式（推荐）
 
+仅保留顶层 CLI：
+
 ```bash
-MacroMapFF build-envkey --help
-MacroMapFF build-final-keymap --help
-MacroMapFF generate-lammps --help
+MacroMapFF build-db --help
+MacroMapFF add-samples --help
+MacroMapFF parameterize --help
 ```
 
 ### 9.2 兼容脚本模式（保持可用）
@@ -204,7 +222,7 @@ cd examples/ps_odms7poss_legacy/scripts
 2. 单模块原子环境提取：为每个模块输出 {module}_atom_env.csv。
 3. 单模块多体观测提取：输出 {module}_multiatom_observed.csv。
 4. 全模块环境合并：输出 final_env_keymap.csv（包含 global_type_ids 多值映射列）。
-5. hop 回退库构建：输出 hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
+5. hop 回退库构建：输出 hop_env/hop2_env_keymap.csv、hop_env/hop1_env_keymap.csv、hop_env/hop0_env_keymap.csv。
 6. 多体主库构建：输出 multiatom_master_keytype.csv。
 
 阶段 B：parameterize（generate 新分子映射并写出 LAMMPS）
@@ -216,7 +234,7 @@ cd examples/ps_odms7poss_legacy/scripts
 
 ### 13.2 build-db 的数据流细节
 
-#### 13.2.1 {module}_atom_env.csv（env_build）
+#### 13.2.1 {module}_atom_env.csv（atom_env）
 
 - 输入：模块结构文件 + 对应 .lammps.lmp。
 - 对每个 atom 生成 env_key（当前最多 hop2），并保留该 atom 在样本中的 OPLS type 与 LJ 参数。
@@ -226,9 +244,9 @@ cd examples/ps_odms7poss_legacy/scripts
   - charge, sigma, epsilon
   - env_key
 
-该表是后续 keymap 合并与 multi_extract 的共同输入。
+该表是后续 keymap 合并与 multiatom_observed 的共同输入。
 
-#### 13.2.2 final_env_keymap.csv（keymap_build）
+#### 13.2.2 final_env_keymap.csv（keymap_hop）
 
 - 读取所有模块 atom_env 行，并按 canonical env_key 合并。
 - 生成全局 key_id（稳定排序后编号）。
@@ -236,9 +254,9 @@ cd examples/ps_odms7poss_legacy/scripts
 - 其中第二列 ``global_type_ids`` 保存 type 到 key_id 的桥接关系（多值，分号分隔），
   每个值格式为 ``segmentX_xx``。
 
-这张 type_stats 表是后续 multi_build 的关键跨表桥。
+这张 type_stats 表是后续 multiatom_master 的关键跨表桥。
 
-#### 13.2.3 hop2/hop1/hop0_env_keymap.csv（hop_build）
+#### 13.2.3 hop2/hop1/hop0_env_keymap.csv（keymap_hop）
 
 - 从 final_env_keymap.csv 聚合得到三个粒度的回退库。
 - 每行包含：
@@ -247,9 +265,9 @@ cd examples/ps_odms7poss_legacy/scripts
   - env_key
   - 环境拆分列（hop1_shell, hop2_shell 位于末尾）
 
-其中 hop0 的 source_key_ids 在 multi_build 中用于构建 key 等价类（见 13.2.4）。
+其中 hop0 的 source_key_ids 在 multiatom_master 中用于构建 key 等价类（见 13.2.4）。
 
-#### 13.2.4 multiatom_master_keytype.csv（multi_build）
+#### 13.2.4 multiatom_master_keytype.csv（multiatom_master）
 
 该步骤发生两次跨表映射：
 
@@ -269,7 +287,7 @@ cd examples/ps_odms7poss_legacy/scripts
 
 ### 13.3 parameterize(generate) 的数据流细节
 
-#### 13.3.1 原子项匹配（atom_match）
+#### 13.3.1 原子项匹配（atom_typing_core）
 
 输入库：hop2_env_keymap.csv、hop1_env_keymap.csv、hop0_env_keymap.csv。
 
@@ -300,7 +318,7 @@ cd examples/ps_odms7poss_legacy/scripts
 - atom_records（供写 Atoms 与后续多体匹配）
 - atom_index_key_types.csv（人工审查用）
 
-#### 13.3.2 多体项匹配（multi_match）
+#### 13.3.2 多体项匹配（multiatom_match_core）
 
 输入库：multiatom_master_keytype.csv。
 
@@ -327,7 +345,7 @@ cd examples/ps_odms7poss_legacy/scripts
 6. 若未命中：
   - 在当前配置下记 WARN，不中断（strict_missing=False）
 
-#### 13.3.3 写出 LAMMPS（lammps_write）
+#### 13.3.3 写出 LAMMPS（io/output）
 
 - atom 的局部 type 编号：由已使用的 global_key_id 去重后重映射为 1..N。
 - multiatom 的 type 编号：按 coeff 去重映射。
