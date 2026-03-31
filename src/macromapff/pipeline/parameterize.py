@@ -78,7 +78,6 @@ def assign_multiatom_params(
     idx_imp_patterns,
     idx_rev_inverted,
     idx_imp_center_inverted,
-    strict_missing=True,
     build_log_path: Path = None,
 ):
     """Assign one interaction kind's multi-atom parameters and emit logs."""
@@ -107,7 +106,6 @@ def assign_multiatom_params(
         cache_miss,
         cache_size,
         build_log_path=build_log_path,
-        strict_missing=strict_missing,
     )
 
     return records, missing, ambiguous
@@ -210,7 +208,6 @@ class LammpsGenerator:
                 idx_imp,
                 idx_rev_inv,
                 idx_imp_center_inv,
-                strict_missing=False,
                 build_log_path=build_log_path,
             )
             angle_records, angle_missing, angle_amb = assign_multiatom_params(
@@ -221,7 +218,6 @@ class LammpsGenerator:
                 idx_imp,
                 idx_rev_inv,
                 idx_imp_center_inv,
-                strict_missing=False,
                 build_log_path=build_log_path,
             )
             dihedral_records, dihedral_missing, dihedral_amb = assign_multiatom_params(
@@ -232,7 +228,6 @@ class LammpsGenerator:
                 idx_imp,
                 idx_rev_inv,
                 idx_imp_center_inv,
-                strict_missing=False,
                 build_log_path=build_log_path,
             )
             improper_records, improper_missing, improper_amb = assign_multiatom_params(
@@ -243,7 +238,6 @@ class LammpsGenerator:
                 idx_imp,
                 idx_rev_inv,
                 idx_imp_center_inv,
-                strict_missing=False,
                 build_log_path=build_log_path,
             )
 

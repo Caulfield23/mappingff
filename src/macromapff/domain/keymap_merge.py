@@ -49,17 +49,13 @@ def _round6(v):
     return round(float(v), 6)
 
 
-def build_final_map(module_specs, mass_map_by_module):
+def build_final_map(module_specs):
     """Merge all module atom-env rows into canonical env-key groups."""
     merged = {}
 
-    for module_name, atom_env_csv, lmp_data in module_specs:
+    for module_name, atom_env_csv in module_specs:
         if not atom_env_csv.exists():
             raise FileNotFoundError(f"atom_env.csv not found: {atom_env_csv}")
-        if not lmp_data.exists():
-            raise FileNotFoundError(f"LAMMPS data file not found: {lmp_data}")
-
-        mass_map = mass_map_by_module[module_name]
 
         with atom_env_csv.open("r", encoding="utf-8") as f:
             import csv
@@ -72,12 +68,12 @@ def build_final_map(module_specs, mass_map_by_module):
                 charge = float(row["charge"])
                 sigma = float(row["sigma"])
                 epsilon = float(row["epsilon"])
-
-                if opls_type_id not in mass_map:
+                mass_raw = str(row.get("mass", "") or "").strip()
+                if not mass_raw:
                     raise ValueError(
-                        f"Missing mass for type={opls_type_id} in {lmp_data}; cannot merge module {module_name}"
+                        f"Missing mass column value in atom_env row for module {module_name}: {atom_env_csv}"
                     )
-                mass = float(mass_map[opls_type_id])
+                mass = float(mass_raw)
 
                 if env_key not in merged:
                     merged[env_key] = {

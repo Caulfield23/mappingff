@@ -59,7 +59,6 @@ def log_multiatom_match(
     cache_miss: int,
     cache_size: int,
     build_log_path: Path = None,
-    strict_missing: bool = True,
 ):
     """Log multi-atom matching misses/ambiguities and cache statistics."""
     if missing:
@@ -67,22 +66,10 @@ def log_multiatom_match(
         append_build_log(
             build_log_path,
             [
-                (
-                    f"[{kind.upper()}][ERROR] missing_count={len(missing)}"
-                    if strict_missing
-                    else f"[{kind.upper()}][WARN] missing_count={len(missing)}"
-                ),
-                (
-                    f"[{kind.upper()}][ERROR] sample_missing={sample}"
-                    if strict_missing
-                    else f"[{kind.upper()}][WARN] sample_missing={sample}"
-                ),
+                f"[{kind.upper()}][WARN] missing_count={len(missing)}",
+                f"[{kind.upper()}][WARN] sample_missing={sample}",
             ],
         )
-        if strict_missing:
-            raise ValueError(
-                f"{kind} has {len(missing)} terms not found in parameter table. Sample key_type_tuple: {sample}"
-            )
 
     if ambiguous:
         lines = [f"[{kind.upper()}][AMBIGUOUS] count={len(ambiguous)}"]
@@ -118,8 +105,8 @@ def write_keymap_log(path: Path, module_specs, final_rows, type_rows):
     lines = []
     lines.append("=== Final keymap merge log ===")
     lines.append(f"modules: {len(module_specs)}")
-    for module_name, atom_env_csv, lmp_data in module_specs:
-        lines.append(f"  - {module_name}: atom_env={atom_env_csv}, lmp={lmp_data}")
+    for module_name, atom_env_csv in module_specs:
+        lines.append(f"  - {module_name}: atom_env={atom_env_csv}")
 
     lines.append("")
     lines.append(f"total keys: {len(final_rows)}")

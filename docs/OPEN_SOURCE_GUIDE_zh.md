@@ -67,9 +67,9 @@ MacroMapFF/
         output.py
         log.py
       pipeline/
-        atom_env.py
+        atommap_sample.py
         keymap_hop.py
-        multiatom_observed.py
+        bondedterms_sample.py
         multiatom_master.py
         parameterize.py
   tests/

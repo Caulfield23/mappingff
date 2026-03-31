@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract observed multi-atom term mappings from a LAMMPS data file."""
+"""Extract one sample's observed bonded-term mappings from a LAMMPS data file."""
 
 from pathlib import Path
 
@@ -9,11 +9,11 @@ from macromapff.io import parse_lammps_topology_and_coeffs
 from macromapff.io import write_observed_csv
 
 
-class MultiatomExtractor:
-    """Extracts per-module observed multi-atom mapping CSV data."""
+class BondedTermsSampleExtractor:
+    """Extracts one sample's observed bonded-term mapping CSV data."""
 
     def __init__(self, lmp_path: Path, atom_env_csv: Path) -> None:
-        """Bind extractor to one LAMMPS data file and atom_env CSV."""
+        """Bind extractor to one LAMMPS data file and one atom_env CSV."""
         self.lmp_path = lmp_path
         self.atom_env_csv = atom_env_csv
 

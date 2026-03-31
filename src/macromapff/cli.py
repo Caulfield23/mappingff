@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict
 from typing import List
 
+from macromapff.pipeline import BondedTermsSampleExtractor
 from macromapff.pipeline import HopDatabaseBuilder
 from macromapff.pipeline import INTERNAL_HOP_DEPTH
 from macromapff.pipeline import KeymapBuilder
 from macromapff.pipeline import LammpsGenerator
-from macromapff.pipeline import MultiatomExtractor
 from macromapff.pipeline import MultiatomMasterBuilder
-from macromapff.pipeline import build_mapping
+from macromapff.pipeline import build_sample_atommap
 from macromapff.pipeline import parse_multiatom_spec
 
 
@@ -23,6 +24,7 @@ class Workflow:
         """Initialize workflow state with normalized database paths."""
         self.db_dir = db_dir.expanduser().resolve()
         self.hop_dir = self.db_dir / "hop_env"
+        self.manifest_csv = self.db_dir / "samples_manifest.csv"
 
     def discover_samples(self, samples_root: Path) -> List[Dict[str, str]]:
         """Discover sample pairs of structure and LAMMPS data files."""
@@ -76,16 +78,30 @@ class Workflow:
     def build_database(self, samples_root: Path) -> None:
         """Build all mapping databases from discovered training samples."""
         samples = self.discover_samples(samples_root)
-        self._build_from_samples(samples)
+        records = self._build_new_sample_records(samples=samples, used_module_ids=set())
+        self._write_manifest(records)
+        self._merge_from_records(records)
         print(f"[DONE] built database from {len(samples)} samples -> {self.db_dir}")
 
     def add_samples(self, samples_root: Path) -> None:
-        """Rebuild databases using existing and newly provided samples."""
+        """Add new sample mappings and re-merge global databases."""
+        existing = self._read_manifest()
+        used_module_ids = {row["module"] for row in existing}
+
         samples = self.discover_samples(samples_root)
         if not samples:
-            raise ValueError("No samples available to build database.")
-        self._build_from_samples(samples)
-        print(f"[DONE] rebuilt database from {len(samples)} samples -> {self.db_dir}")
+            raise ValueError("No new samples found to add.")
+
+        new_records = self._build_new_sample_records(
+            samples=samples,
+            used_module_ids=used_module_ids,
+        )
+        merged = existing + new_records
+        self._write_manifest(merged)
+        self._merge_from_records(merged)
+        print(
+            f"[DONE] added {len(new_records)} new samples, merged total {len(merged)} samples -> {self.db_dir}"
+        )
 
     def parameterize_molecule(self, mol_path: Path, out_path: Path | None = None) -> None:
         """Generate a parameterized LAMMPS data file for one molecule."""
@@ -101,24 +117,35 @@ class Workflow:
 
         print(f"[DONE] parameterized output: {out_path}")
 
-    def _build_from_samples(self, samples: List[Dict[str, str]]) -> None:
-        """Execute the full multi-stage build pipeline over sample metadata."""
+    def _build_new_sample_records(
+        self,
+        samples: List[Dict[str, str]],
+        used_module_ids: set[str],
+    ) -> List[Dict[str, str]]:
+        """Build per-sample artifacts for new samples and return manifest rows."""
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.hop_dir.mkdir(parents=True, exist_ok=True)
 
-        final_specs: List[str] = []
-        multi_specs: List[str] = []
+        records: List[Dict[str, str]] = []
 
         for s in samples:
-            module = s["module"]
+            module_seed = s["module"]
+            module = module_seed
+            suffix = 2
+            while module in used_module_ids:
+                module = f"{module_seed}_{suffix}"
+                suffix += 1
+            used_module_ids.add(module)
+
             mol = Path(s["mol"])
             lmp = Path(s["lmp"])
 
             env_out = self.db_dir / f"{module}_env"
             atom_env_csv = env_out / f"{module}_AtomMap.csv"
             multi_prefix = env_out / f"{module}_BondedTerms"
+            multi_csv = multi_prefix.with_suffix(".csv")
 
-            build_mapping(
+            build_sample_atommap(
                 structure_path=mol,
                 out_dir=env_out,
                 module=module,
@@ -126,19 +153,45 @@ class Workflow:
                 hop_depth=INTERNAL_HOP_DEPTH,
             )
 
-            extractor = MultiatomExtractor(lmp_path=lmp, atom_env_csv=atom_env_csv)
+            extractor = BondedTermsSampleExtractor(lmp_path=lmp, atom_env_csv=atom_env_csv)
             extractor.extract(out_prefix=multi_prefix)
 
-            final_specs.append(f"{module}::{atom_env_csv}::{lmp}")
-            multi_specs.append(f"{module}::{multi_prefix}.csv")
+            records.append(
+                {
+                    "module": module,
+                    "mol": str(mol.resolve()),
+                    "lmp": str(lmp.resolve()),
+                    "atom_env_csv": str(atom_env_csv.resolve()),
+                    "bondedterms_csv": str(multi_csv.resolve()),
+                }
+            )
+
+        return records
+
+    def _merge_from_records(self, records: List[Dict[str, str]]) -> None:
+        """Merge global databases from manifest rows."""
+        if not records:
+            raise ValueError("No sample records available to merge.")
+
+        final_specs: List[str] = []
+        multi_specs: List[str] = []
+        for row in records:
+            atom_env_csv = Path(row["atom_env_csv"]).expanduser().resolve()
+            bondedterms_csv = Path(row["bondedterms_csv"]).expanduser().resolve()
+            if not atom_env_csv.exists():
+                raise FileNotFoundError(f"AtomMap CSV not found: {atom_env_csv}")
+            if not bondedterms_csv.exists():
+                raise FileNotFoundError(f"BondedTerms CSV not found: {bondedterms_csv}")
+            final_specs.append(f"{row['module']}::{atom_env_csv}")
+            multi_specs.append(f"{row['module']}::{bondedterms_csv}")
 
         final_prefix = self.db_dir / "Global_AtomMap"
-        external_final_log = self.db_dir.parent / "build.log"
+        build_log = self.db_dir / "build.log"
 
         keymap_builder = KeymapBuilder(final_specs)
         final_csv, _, _, _ = keymap_builder.build(
             out_prefix=final_prefix,
-            out_log=external_final_log,
+            out_log=build_log,
         )
 
         hop2_out = self.hop_dir / "hop2_KeyMap.csv"
@@ -160,8 +213,56 @@ class Workflow:
         multi_builder.build(
             multiatom_specs=multi_specs_parsed,
             out_prefix=master_out_prefix,
-            log_file=external_final_log,
+            log_file=build_log,
         )
+
+    def _read_manifest(self) -> List[Dict[str, str]]:
+        """Load sample manifest rows from database directory."""
+        if not self.manifest_csv.exists():
+            return []
+
+        rows: List[Dict[str, str]] = []
+        with self.manifest_csv.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            required = {"module", "mol", "lmp", "atom_env_csv", "bondedterms_csv"}
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                raise ValueError(
+                    f"Invalid samples manifest, missing columns: {sorted(missing)} ({self.manifest_csv})"
+                )
+            for row in reader:
+                if not row.get("module"):
+                    continue
+                rows.append(
+                    {
+                        "module": str(row["module"]),
+                        "mol": str(row["mol"]),
+                        "lmp": str(row["lmp"]),
+                        "atom_env_csv": str(row["atom_env_csv"]),
+                        "bondedterms_csv": str(row["bondedterms_csv"]),
+                    }
+                )
+        return rows
+
+    def _write_manifest(self, rows: List[Dict[str, str]]) -> None:
+        """Write sample manifest rows into database directory."""
+        self.manifest_csv.parent.mkdir(parents=True, exist_ok=True)
+        with self.manifest_csv.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["module", "mol", "lmp", "atom_env_csv", "bondedterms_csv"],
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(
+                    {
+                        "module": row["module"],
+                        "mol": row["mol"],
+                        "lmp": row["lmp"],
+                        "atom_env_csv": row["atom_env_csv"],
+                        "bondedterms_csv": row["bondedterms_csv"],
+                    }
+                )
 
 
 def main() -> None:

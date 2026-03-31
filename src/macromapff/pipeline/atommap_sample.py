@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build atom-level environment mappings from structure and LAMMPS data."""
+"""Build one sample's atom-level environment mapping from structure and LAMMPS data."""
 
 from pathlib import Path
 
@@ -14,14 +14,14 @@ from macromapff.io import write_atom_env_csv
 INTERNAL_HOP_DEPTH = 2
 
 
-def build_mapping(
+def build_sample_atommap(
     structure_path: Path,
     out_dir: Path,
     module: str,
     lmp_path: Path = None,
     hop_depth: int = 2,
 ):
-    """Build one module's atom-env CSV from structure and LAMMPS data."""
+    """Build one sample's atom-env CSV from structure and LAMMPS data."""
     if lmp_path is None:
         raise ValueError("--lmp is required for the pure LAMMPS route")
 
@@ -56,6 +56,7 @@ def build_mapping(
             charge = lmp_atom["charge"]
             sigma = lmp_atom["sigma"]
             epsilon = lmp_atom["epsilon"]
+            mass = lmp_atom["mass"]
 
             env_key, _ = env_builder.make_env_key(
                 mol,
@@ -72,6 +73,7 @@ def build_mapping(
                 "charge": charge,
                 "sigma": sigma,
                 "epsilon": epsilon,
+                "mass": mass,
                 "env_key": env_key,
             }
             atom_rows.append(row)
@@ -107,5 +109,3 @@ def build_mapping(
                 f"- pdb: {pdb_fallback}\n"
                 f"  error: {pdb_exc}"
             )
-
-

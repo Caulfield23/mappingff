@@ -307,6 +307,7 @@ def parse_lammps_data(lmp_path: Path):
         info["epsilon"] = pair_coeffs[lmp_type]["epsilon"]
         info["atomic_num"] = type_info[lmp_type]["atomic_num"]
         info["type_name"] = type_info[lmp_type]["type_name"]
+        info["mass"] = type_info[lmp_type]["mass"]
 
     return atoms, type_info
 

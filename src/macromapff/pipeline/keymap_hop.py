@@ -9,7 +9,6 @@ from pathlib import Path
 from macromapff.domain import ENV_SPLIT_COLUMNS
 from macromapff.domain import build_final_map
 from macromapff.domain import finalize_records
-from macromapff.io import parse_lammps_masses
 from macromapff.io import write_keymap_csv
 from macromapff.io import write_keymap_log
 
@@ -17,13 +16,13 @@ from macromapff.io import write_keymap_log
 def parse_module_spec(spec: str):
     """Parse one module spec token into module name and input paths."""
     parts = spec.split("::")
-    if len(parts) != 3:
+    if len(parts) != 2:
         raise ValueError(
             f"Invalid --module-spec format: {spec}\n"
-            f"Expected: module_name::atom_env_csv::lammps_data"
+            f"Expected: module_name::atom_env_csv"
         )
-    module, atom_env_csv, lmp_data = parts
-    return module.strip(), Path(atom_env_csv).expanduser(), Path(lmp_data).expanduser()
+    module, atom_env_csv = parts
+    return module.strip(), Path(atom_env_csv).expanduser()
 
 
 class KeymapBuilder:
@@ -41,11 +40,7 @@ class KeymapBuilder:
 
     def build(self, out_prefix: Path, out_log: Path | None = None):
         """Generate merged keymap CSV and companion merge diagnostics log."""
-        mass_map_by_module = {}
-        for module_name, _, lmp_data in self.module_specs:
-            mass_map_by_module[module_name] = parse_lammps_masses(lmp_data)
-
-        merged = build_final_map(self.module_specs, mass_map_by_module)
+        merged = build_final_map(self.module_specs)
         final_rows, type_rows = finalize_records(merged)
 
         out_prefix = Path(out_prefix).expanduser()

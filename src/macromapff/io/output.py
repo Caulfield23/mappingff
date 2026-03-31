@@ -26,6 +26,7 @@ def write_atom_env_csv(out_dir: Path, module: str, atom_rows):
                 "charge",
                 "sigma",
                 "epsilon",
+                "mass",
                 "env_key",
             ],
         )
