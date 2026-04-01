@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict
@@ -24,7 +23,6 @@ class Workflow:
         """Initialize workflow state with normalized database paths."""
         self.db_dir = db_dir.expanduser().resolve()
         self.hop_dir = self.db_dir / "hop_env"
-        self.manifest_csv = self.db_dir / "samples_manifest.csv"
 
     def discover_samples(self, samples_root: Path) -> List[Dict[str, str]]:
         """Discover sample pairs of structure and LAMMPS data files."""
@@ -78,29 +76,21 @@ class Workflow:
     def build_database(self, samples_root: Path) -> None:
         """Build all mapping databases from discovered training samples."""
         samples = self.discover_samples(samples_root)
-        records = self._build_new_sample_records(samples=samples, used_module_ids=set())
-        self._write_manifest(records)
-        self._merge_from_records(records)
+        self._build_new_sample_records(samples=samples)
+        self._merge_from_records(self._discover_existing_sample_records())
         print(f"[DONE] built database from {len(samples)} samples -> {self.db_dir}")
 
     def add_samples(self, samples_root: Path) -> None:
         """Add new sample mappings and re-merge global databases."""
-        existing = self._read_manifest()
-        used_module_ids = {row["module"] for row in existing}
-
         samples = self.discover_samples(samples_root)
         if not samples:
             raise ValueError("No new samples found to add.")
 
-        new_records = self._build_new_sample_records(
-            samples=samples,
-            used_module_ids=used_module_ids,
-        )
-        merged = existing + new_records
-        self._write_manifest(merged)
+        self._build_new_sample_records(samples=samples)
+        merged = self._discover_existing_sample_records()
         self._merge_from_records(merged)
         print(
-            f"[DONE] added {len(new_records)} new samples, merged total {len(merged)} samples -> {self.db_dir}"
+            f"[DONE] added {len(samples)} samples (overwrite on name conflict), merged total {len(merged)} samples -> {self.db_dir}"
         )
 
     def parameterize_molecule(self, mol_path: Path, out_path: Path | None = None) -> None:
@@ -120,22 +110,15 @@ class Workflow:
     def _build_new_sample_records(
         self,
         samples: List[Dict[str, str]],
-        used_module_ids: set[str],
     ) -> List[Dict[str, str]]:
-        """Build per-sample artifacts for new samples and return manifest rows."""
+        """Build per-sample artifacts for new samples (overwrite on name conflict)."""
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.hop_dir.mkdir(parents=True, exist_ok=True)
 
         records: List[Dict[str, str]] = []
 
         for s in samples:
-            module_seed = s["module"]
-            module = module_seed
-            suffix = 2
-            while module in used_module_ids:
-                module = f"{module_seed}_{suffix}"
-                suffix += 1
-            used_module_ids.add(module)
+            module = s["module"]
 
             mol = Path(s["mol"])
             lmp = Path(s["lmp"])
@@ -168,8 +151,30 @@ class Workflow:
 
         return records
 
+    def _discover_existing_sample_records(self) -> List[Dict[str, str]]:
+        """Scan db_dir and collect all sample *_env records for global merge."""
+        records: List[Dict[str, str]] = []
+        for env_dir in sorted(self.db_dir.glob("*_env")):
+            if not env_dir.is_dir():
+                continue
+            if env_dir.name == "hop_env":
+                continue
+            module = env_dir.name[: -len("_env")]
+            atom_env_csv = env_dir / f"{module}_AtomMap.csv"
+            bondedterms_csv = env_dir / f"{module}_BondedTerms.csv"
+            records.append(
+                {
+                    "module": module,
+                    "mol": "",
+                    "lmp": "",
+                    "atom_env_csv": str(atom_env_csv.resolve()),
+                    "bondedterms_csv": str(bondedterms_csv.resolve()),
+                }
+            )
+        return records
+
     def _merge_from_records(self, records: List[Dict[str, str]]) -> None:
-        """Merge global databases from manifest rows."""
+        """Merge global databases from discovered sample env records."""
         if not records:
             raise ValueError("No sample records available to merge.")
 
@@ -215,54 +220,6 @@ class Workflow:
             out_prefix=master_out_prefix,
             log_file=build_log,
         )
-
-    def _read_manifest(self) -> List[Dict[str, str]]:
-        """Load sample manifest rows from database directory."""
-        if not self.manifest_csv.exists():
-            return []
-
-        rows: List[Dict[str, str]] = []
-        with self.manifest_csv.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            required = {"module", "mol", "lmp", "atom_env_csv", "bondedterms_csv"}
-            missing = required - set(reader.fieldnames or [])
-            if missing:
-                raise ValueError(
-                    f"Invalid samples manifest, missing columns: {sorted(missing)} ({self.manifest_csv})"
-                )
-            for row in reader:
-                if not row.get("module"):
-                    continue
-                rows.append(
-                    {
-                        "module": str(row["module"]),
-                        "mol": str(row["mol"]),
-                        "lmp": str(row["lmp"]),
-                        "atom_env_csv": str(row["atom_env_csv"]),
-                        "bondedterms_csv": str(row["bondedterms_csv"]),
-                    }
-                )
-        return rows
-
-    def _write_manifest(self, rows: List[Dict[str, str]]) -> None:
-        """Write sample manifest rows into database directory."""
-        self.manifest_csv.parent.mkdir(parents=True, exist_ok=True)
-        with self.manifest_csv.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=["module", "mol", "lmp", "atom_env_csv", "bondedterms_csv"],
-            )
-            writer.writeheader()
-            for row in rows:
-                writer.writerow(
-                    {
-                        "module": row["module"],
-                        "mol": row["mol"],
-                        "lmp": row["lmp"],
-                        "atom_env_csv": row["atom_env_csv"],
-                        "bondedterms_csv": row["bondedterms_csv"],
-                    }
-                )
 
 
 def main() -> None:

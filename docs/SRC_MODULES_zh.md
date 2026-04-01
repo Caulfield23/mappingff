@@ -67,8 +67,9 @@
 - build-db:
   - `cli.py(Workflow)` -> `atommap_sample.py` -> `bondedterms_sample.py` -> `keymap_hop.py` -> `multiatom_master.py`
 - add-samples:
-  - `cli.py(Workflow)` 读取 `samples_manifest.csv`（旧样本索引）
-  - 仅对新样本运行 `atommap_sample.py` + `bondedterms_sample.py`
-  - 基于旧+新 manifest 重新合并 `Global_AtomMap.csv` / `hop_env/*` / `Global_BondedTerms.csv`
+  - `cli.py(Workflow)` 仅对新样本运行 `atommap_sample.py` + `bondedterms_sample.py`
+  - 输出目录直接为 `db-dir/*_env`，与已有 sample env 同级
+  - 若 module 同名则覆盖对应 `*_env`
+  - 通过扫描 `db-dir` 下全部 `*_env` 自动重建 `Global_AtomMap.csv` / `hop_env/*` / `Global_BondedTerms.csv`
 - parameterize:
   - `cli.py(Workflow)` -> `parameterize.py` + `io/output.py`

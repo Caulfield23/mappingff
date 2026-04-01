@@ -36,7 +36,7 @@ MacroMapFF build-db examples/ps_odms7poss_legacy
 MacroMapFF add-samples /path/to/new_samples_folder
 ```
 
-`add-samples` keeps existing `*_env` sample databases intact, builds only new sample `*_env` folders, and then re-merges global databases from `samples_manifest.csv`.
+`add-samples` writes sample `*_env` folders directly under `--db-dir` (same level as existing sample env folders), overwrites on module-name conflict, and then auto-rebuilds global databases by scanning all `*_env` folders.
 
 ### 4. Parameterize a new molecule
 
