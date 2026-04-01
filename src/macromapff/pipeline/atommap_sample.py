@@ -5,26 +5,20 @@ from pathlib import Path
 
 from rdkit import Chem
 
-from macromapff.domain import EnvFeatureBuilder
-from macromapff.io import load_structure_any
-from macromapff.io import parse_lammps_data
-from macromapff.io import write_atom_env_csv
-
-
-INTERNAL_HOP_DEPTH = 2
+from macromapff.domain.env_key_match import make_env_key
+from macromapff.domain.env_key_match import precompute_atom_context
+from macromapff.io.input import load_structure_any
+from macromapff.io.input import parse_lammps_data
+from macromapff.io.output import write_atom_env_csv
 
 
 def build_sample_atommap(
     structure_path: Path,
     out_dir: Path,
     module: str,
-    lmp_path: Path = None,
-    hop_depth: int = 2,
+    lmp_path: Path,
 ):
     """Build one sample's atom-env CSV from structure and LAMMPS data."""
-    if lmp_path is None:
-        raise ValueError("--lmp is required for the pure LAMMPS route")
-
     lmp_atoms, _ = parse_lammps_data(lmp_path)
 
     def _build_with_loaded_mol(mol: Chem.Mol, source_path: Path):
@@ -36,8 +30,7 @@ def build_sample_atommap(
             )
 
         atom_rows = []
-        env_builder = EnvFeatureBuilder()
-        atom_context = env_builder.precompute_atom_context(mol)
+        atom_context = precompute_atom_context(mol)
 
         for atom_idx in range(mol.GetNumAtoms()):
             atom = mol.GetAtomWithIdx(atom_idx)
@@ -58,10 +51,9 @@ def build_sample_atommap(
             epsilon = lmp_atom["epsilon"]
             mass = lmp_atom["mass"]
 
-            env_key, _ = env_builder.make_env_key(
+            env_key, _ = make_env_key(
                 mol,
                 atom,
-                hop_depth=hop_depth,
                 atom_ctx=atom_context.get(atom_idx),
             )
             row = {

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Merge module bonded observations into one global bonded database."""
+
 import json
 from collections import defaultdict
 
@@ -26,8 +28,8 @@ def _canonicalize_key_type_tuple(interaction_kind: str, key_type_tuple):
     return [center] + others
 
 
-def build_master(type_to_keyid, key_to_class, multiatom_specs):
-    """Merge module-level observed terms into master key-type mappings."""
+def build_global_bonded_map(type_to_keyid, key_to_class, bonded_specs):
+    """Merge module-level observed terms into global bonded key-type mappings."""
     merged = defaultdict(
         lambda: {
             "term_count": 0,
@@ -38,11 +40,11 @@ def build_master(type_to_keyid, key_to_class, multiatom_specs):
 
     missing_type_refs = []
 
-    for module_name, multiatom_csv in multiatom_specs:
-        if not multiatom_csv.exists():
-            raise FileNotFoundError(f"multiatom CSV not found: {multiatom_csv}")
+    for module_name, bonded_csv in bonded_specs:
+        if not bonded_csv.exists():
+            raise FileNotFoundError(f"bonded CSV not found: {bonded_csv}")
 
-        with multiatom_csv.open("r", encoding="utf-8") as f:
+        with bonded_csv.open("r", encoding="utf-8") as f:
             import csv
 
             reader = csv.DictReader(f)

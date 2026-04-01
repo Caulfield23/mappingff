@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
+"""Build per-sample bonded observation records from topology and atom maps."""
 
-INTERACTION_ORDER = {"bond": 0, "angle": 1, "dihedral": 2, "improper": 3}
+from macromapff.domain.bonded_global_merge import INTERACTION_ORDER
 
 
 def canonicalize_tuple(kind: str, env_tuple: tuple, type_tuple: tuple):

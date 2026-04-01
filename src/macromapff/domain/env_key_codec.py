@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Canonicalization and column codec utilities for atom environment keys."""
+
 import json
 
 ENV_KEY_PRIORITY = [

@@ -22,3 +22,10 @@ tests/artifacts/
 .vscode/
 .idea/
 .DS_Store
+
+# Localized Chinese docs (kept locally)
+README_zh.md
+docs/DEVELOPER_GUIDE_zh.md
+
+# Agent prompts
+AGENTS.md

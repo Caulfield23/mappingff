@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
+"""Input parsers and database loaders for structures, LAMMPS files and CSV tables."""
+
 import csv
 from collections import defaultdict
 from pathlib import Path
 
 from rdkit import Chem
 
-from macromapff.domain import ENV_INDEX_COLUMNS
+from macromapff.domain.atom_match import ENV_MATCH_COLUMNS
 
 
 SECTION_NAMES = {
@@ -243,22 +245,6 @@ def parse_lammps_masses(lmp_path: Path):
     return masses
 
 
-class LammpsDataParser:
-    """Small object wrapper around LAMMPS section parsing helpers."""
-
-    def __init__(self, lmp_path: Path) -> None:
-        """Bind parser instance to one LAMMPS data file path."""
-        self.lmp_path = lmp_path
-
-    def parse_sections(self):
-        """Parse Masses, Pair Coeffs, and Atoms sections."""
-        return parse_lammps_sections(self.lmp_path)
-
-    def parse_masses(self):
-        """Parse only the Masses section for type-to-mass mapping."""
-        return parse_lammps_masses(self.lmp_path)
-
-
 def infer_atomic_num_from_mass(mass: float, max_z: int = 36, tol: float = 0.2):
     """Infer atomic number by nearest periodic-table mass within tolerance."""
     ptable = Chem.GetPeriodicTable()
@@ -435,7 +421,7 @@ def load_hop_param_db(hop_csv: Path):
                 "epsilon": float(row["epsilon_mean"]),
                 "mass": float(row["mass_mean"]),
             }
-            idx_key = tuple(str(row.get(c, "") or "") for c in ENV_INDEX_COLUMNS)
+            idx_key = tuple(str(row.get(c, "") or "") for c in ENV_MATCH_COLUMNS)
             structured_index[idx_key] = payload
 
             env_key = str(row.get("env_key", "") or "").strip()
@@ -460,10 +446,10 @@ def _parse_json(raw: str):
         return None
 
 
-def load_multiatom_db(multiatom_csv: Path):
-    """Load multi-atom DB and build forward/inverted matching indexes."""
-    if not multiatom_csv.exists():
-        raise FileNotFoundError(f"Multi-atom parameter database not found: {multiatom_csv}")
+def load_bonded_db(bonded_csv: Path):
+    """Load bonded DB and build forward/inverted matching indexes."""
+    if not bonded_csv.exists():
+        raise FileNotFoundError(f"Bonded parameter database not found: {bonded_csv}")
 
     reversible_kinds = {"bond", "angle", "dihedral"}
     idx_rev_patterns = defaultdict(list)
@@ -481,7 +467,7 @@ def load_multiatom_db(multiatom_csv: Path):
                 allowed.append(frozenset([int(item)]))
         return tuple(allowed)
 
-    with multiatom_csv.open("r", encoding="utf-8") as f:
+    with bonded_csv.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             kind = row["interaction_kind"].strip().lower()

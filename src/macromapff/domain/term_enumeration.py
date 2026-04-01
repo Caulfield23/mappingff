@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Topology term enumeration helpers for bonds, angles, dihedrals and impropers."""
+
 from itertools import combinations
 
 

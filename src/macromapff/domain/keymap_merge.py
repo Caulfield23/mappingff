@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+"""Merge atom environment rows into stable global keymap records."""
+
 import math
 from collections import Counter, defaultdict
 
-from macromapff.domain.env import canonicalize_env_key, split_env_key_columns
+from macromapff.domain.env_key_codec import canonicalize_env_key, split_env_key_columns
 
 
 def _new_stats():

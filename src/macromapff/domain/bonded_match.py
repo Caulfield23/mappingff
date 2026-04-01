@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Slot-based matching of bonded terms against global bonded patterns."""
+
 from itertools import product
 
 
@@ -25,7 +27,7 @@ def _improper_matches_pattern(key_tuple, pattern):
     return False
 
 
-def assign_multiatom_params_core(
+def assign_bonded_params(
     kind: str,
     terms,
     atom_key_sets,

@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
+"""Build and matching log writers used by workflow and pipeline stages."""
+
 from collections import defaultdict
 from pathlib import Path
 
-from macromapff.domain import INTERACTION_ORDER
+from macromapff.domain.bonded_global_merge import INTERACTION_ORDER
+
+
+def _write_log_lines(log_path: Path, lines, mode: str) -> None:
+    """Write plain-text lines to a log file with the requested mode."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open(mode, encoding="utf-8") as f:
+        for line in lines:
+            f.write(str(line) + "\n")
 
 
 def append_build_log(log_path: Path, lines):
     """Append plain-text lines to build log file if enabled."""
-    if log_path is None:
-        return
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as f:
-        for line in lines:
-            f.write(str(line) + "\n")
+    _write_log_lines(log_path, lines, mode="a")
 
 
 def init_build_log(log_path: Path, lines):
     """Initialize or overwrite build log with header lines."""
-    if log_path is None:
-        return
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as f:
-        for line in lines:
-            f.write(str(line) + "\n")
+    _write_log_lines(log_path, lines, mode="w")
 
 
 def write_missing_env_log(
@@ -51,14 +51,14 @@ def write_missing_env_log(
     append_build_log(log_path, lines)
 
 
-def log_multiatom_match(
+def log_bonded_match(
     kind: str,
     missing,
     ambiguous,
     cache_hit: int,
     cache_miss: int,
     cache_size: int,
-    build_log_path: Path = None,
+    build_log_path: Path,
 ):
     """Log multi-atom matching misses/ambiguities and cache statistics."""
     if missing:
@@ -155,7 +155,7 @@ def write_keymap_log(path: Path, module_specs, final_rows, type_rows):
 
 
 def append_merge_conflict_log(log_path: Path, rows):
-    """Append grouped multi-atom coeff conflict summary to log file."""
+    """Append grouped bonded coeff conflict summary to log file."""
     grouped = defaultdict(set)
     for row in rows:
         base_key = (row["interaction_kind"], row["key_type_tuple"])
@@ -171,11 +171,11 @@ def append_merge_conflict_log(log_path: Path, rows):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write("\n")
-        f.write("=== Multiatom merge check ===\n")
+        f.write("=== Bonded merge check ===\n")
         f.write(
             "rule: merge only when interaction_kind + key_type_tuple + coeff_param_sets are all identical\n"
         )
-        f.write(f"rows in multiatom master: {len(rows)}\n")
+        f.write(f"rows in global bonded table: {len(rows)}\n")
         f.write(f"key_type groups with multiple coeff sets: {len(conflicts)}\n")
 
         if conflicts:

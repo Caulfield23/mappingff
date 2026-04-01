@@ -1,65 +1,66 @@
+"""Parameterization pipeline that maps atoms/bonded terms and writes LAMMPS output."""
+
 from pathlib import Path
 
 from rdkit import RDLogger
 
 from rdkit import Chem
-from macromapff.domain import assign_multiatom_params_core
-from macromapff.domain import build_atom_types_core
-from macromapff.domain import build_type_map
-from macromapff.domain import enumerate_terms
-from macromapff.io import append_build_log
-from macromapff.io import init_build_log
-from macromapff.io import load_hop_param_db
-from macromapff.io import load_input_structure
-from macromapff.io import load_multiatom_db
-from macromapff.io import log_multiatom_match
-from macromapff.io import write_atom_keytype_map
-from macromapff.io import write_lammps_data as _write_lammps_data
-from macromapff.io import write_missing_env_log
+from macromapff.domain.atom_match import build_atom_match
+from macromapff.domain.bonded_match import assign_bonded_params
+from macromapff.domain.bonded_match import build_type_map
+from macromapff.domain.env_key_match import INTERNAL_HOP_DEPTH
+from macromapff.domain.term_enumeration import enumerate_terms
+from macromapff.io.input import load_bonded_db
+from macromapff.io.input import load_hop_param_db
+from macromapff.io.input import load_input_structure
+from macromapff.io.log import append_build_log
+from macromapff.io.log import init_build_log
+from macromapff.io.log import log_bonded_match
+from macromapff.io.log import write_missing_env_log
+from macromapff.io.output import write_atom_keytype_map
+from macromapff.io.output import write_lammps_data as _write_lammps_data
 
-INTERNAL_HOP_DEPTH = 2
 INTERNAL_FALLBACK_HOPS = (1, 0)
-DB_FINAL_ENV = "Global_AtomMap.csv"
+INTERNAL_BOX_PADDING = 20.0
+INTERNAL_MOLECULE_ID = 1
+INTERNAL_BUILD_LOG_NAME = "parameterize.log"
+INTERNAL_ATOM_KEYTYPE_MAP_NAME = "atom_index_key_types.csv"
 DB_HOP2_ENV = "hop_env/hop2_KeyMap.csv"
 DB_HOP1_ENV = "hop_env/hop1_KeyMap.csv"
 DB_HOP0_ENV = "hop_env/hop0_KeyMap.csv"
-DB_MULTIATOM = "Global_BondedTerms.csv"
+DB_BONDED = "Global_BondedTerms.csv"
 
 
-def build_atom_types(
+def build_atom_match_with_logs(
     mol: Chem.Mol,
     hop2_env_to_atom_param: dict,
     hop1_env_to_atom_param: dict,
     hop0_env_to_atom_param: dict,
-    hop_depth: int,
-    fallback_hops=(),
-    missing_log_path: Path = None,
-    structure_path: Path = None,
-    build_log_path: Path = None,
+    structure_path: Path,
+    build_log_path: Path,
 ):
-    """Assign atom-level parameters and record fallback/missing diagnostics."""
-    atom_records, local_type_params, fallback_hit_counter, missing = build_atom_types_core(
+    """Assign atom-level match results and record fallback/missing diagnostics."""
+    atom_records, local_type_params, fallback_hit_counter, missing = build_atom_match(
         mol,
         hop2_env_to_atom_param,
         hop1_env_to_atom_param,
         hop0_env_to_atom_param,
-        hop_depth,
-        fallback_hops=fallback_hops,
+        fallback_hops=INTERNAL_FALLBACK_HOPS,
     )
 
-    if missing and missing_log_path is not None:
+    if missing:
         write_missing_env_log(
-            log_path=missing_log_path,
-            structure_path=structure_path or Path("unknown"),
+            log_path=build_log_path,
+            structure_path=structure_path,
             missing=missing,
-            hop_depth=hop_depth,
-            fallback_hops=fallback_hops,
+            hop_depth=INTERNAL_HOP_DEPTH,
+            fallback_hops=INTERNAL_FALLBACK_HOPS,
         )
 
     append_build_log(
         build_log_path,
         [
-            "[ATOM] build_atom_types finished",
+            "[ATOM] build_atom_match finished",
             f"[ATOM] total_atoms={len(atom_records)}",
             f"[ATOM] missing_atoms={len(missing)}",
             "[ATOM] fallback_hits="
@@ -70,17 +71,21 @@ def build_atom_types(
     return atom_records, local_type_params, dict(sorted(fallback_hit_counter.items()))
 
 
-def assign_multiatom_params(
+def assign_bonded_params_with_logs(
     kind: str,
     terms,
     atom_key_sets,
-    idx_rev_patterns,
-    idx_imp_patterns,
-    idx_rev_inverted,
-    idx_imp_center_inverted,
-    build_log_path: Path = None,
+    matcher_indexes,
+    build_log_path: Path,
 ):
     """Assign one interaction kind's multi-atom parameters and emit logs."""
+    (
+        idx_rev_patterns,
+        idx_imp_patterns,
+        idx_rev_inverted,
+        idx_imp_center_inverted,
+    ) = matcher_indexes
+
     (
         records,
         missing,
@@ -88,7 +93,7 @@ def assign_multiatom_params(
         cache_hit,
         cache_miss,
         cache_size,
-    ) = assign_multiatom_params_core(
+    ) = assign_bonded_params(
         kind,
         terms,
         atom_key_sets,
@@ -98,7 +103,7 @@ def assign_multiatom_params(
         idx_imp_center_inverted,
     )
 
-    log_multiatom_match(
+    log_bonded_match(
         kind,
         missing,
         ambiguous,
@@ -110,180 +115,130 @@ def assign_multiatom_params(
 
     return records, missing, ambiguous
 
-def _resolve_db_paths(db_dir: Path):
-    """Resolve canonical database file paths relative to db directory."""
-    base = db_dir.expanduser().resolve()
-    return {
-        "final_env": base / DB_FINAL_ENV,
-        "hop2_env": base / DB_HOP2_ENV,
-        "hop1_env": base / DB_HOP1_ENV,
-        "hop0_env": base / DB_HOP0_ENV,
-        "multiatom": base / DB_MULTIATOM,
-    }
+def parameterize_lammps(db_dir: Path, structure: Path, out: Path):
+    """Run atom matching, bonded matching, and LAMMPS file generation."""
+    db_root = db_dir.expanduser().resolve()
+    RDLogger.DisableLog("rdApp.warning")
+    hop2_env = db_root / DB_HOP2_ENV
+    hop1_env = db_root / DB_HOP1_ENV
+    hop0_env = db_root / DB_HOP0_ENV
+    bonded = db_root / DB_BONDED
 
+    build_log_path = out.parent / INTERNAL_BUILD_LOG_NAME
+    atom_keytype_map_path = out.parent / INTERNAL_ATOM_KEYTYPE_MAP_NAME
 
-class LammpsGenerator:
-    """End-to-end LAMMPS parameterization orchestrator for one molecule."""
+    init_build_log(
+        build_log_path,
+        [
+            "build log",
+            f"structure: {structure}",
+            f"db_dir: {db_root}",
+            f"hop_depth: {INTERNAL_HOP_DEPTH}",
+            "fallback_hops: " + ",".join(str(x) for x in INTERNAL_FALLBACK_HOPS),
+        ],
+    )
 
-    def __init__(
-        self,
-        db_dir: Path,
-        box_padding: float = 20.0,
-        molecule_id: int = 1,
-        build_log: Path | None = None,
-        atom_keytype_map: Path | None = None,
-    ) -> None:
-        """Initialize generator with database path and output options."""
-        self.db_dir = db_dir
-        self.box_padding = box_padding
-        self.molecule_id = molecule_id
-        self.build_log = build_log
-        self.atom_keytype_map = atom_keytype_map
+    try:
+        mol = load_input_structure(structure)
+        if mol is None:
+            raise ValueError(f"RDKit failed to read structure file: {structure}")
+        if mol.GetNumConformers() == 0:
+            raise ValueError("Input structure has no 3D conformer coordinates")
+        hop2_env_to_atom_param = load_hop_param_db(hop2_env)
+        hop1_env_to_atom_param = load_hop_param_db(hop1_env)
+        hop0_env_to_atom_param = load_hop_param_db(hop0_env)
 
-    def generate(self, structure: Path, out: Path):
-        """Run atom typing, multi-atom typing, and LAMMPS file generation."""
-        RDLogger.DisableLog("rdApp.warning")
-        db_paths = _resolve_db_paths(self.db_dir)
+        matcher_indexes = load_bonded_db(bonded)
 
-        build_log_path = (
-            self.build_log if self.build_log is not None else out.parent / "parameterize.log"
+        atom_records, atom_type_rows, fallback_hit_counter = build_atom_match_with_logs(
+            mol,
+            hop2_env_to_atom_param,
+            hop1_env_to_atom_param,
+            hop0_env_to_atom_param,
+            structure_path=structure,
+            build_log_path=build_log_path,
         )
-        atom_keytype_map_path = (
-            self.atom_keytype_map
-            if self.atom_keytype_map is not None
-            else out.parent / "atom_index_key_types.csv"
+        write_atom_keytype_map(atom_keytype_map_path, atom_records)
+        append_build_log(
+            build_log_path,
+            [f"[ATOM] key_type_map={atom_keytype_map_path}"],
+        )
+        atom_key_sets = {r["atom_id"]: set(r["global_key_ids"]) for r in atom_records}
+
+        bonds, angles, dihedrals, impropers = enumerate_terms(mol)
+
+        bond_records, bond_missing, bond_amb = assign_bonded_params_with_logs(
+            "bond",
+            bonds,
+            atom_key_sets,
+            matcher_indexes,
+            build_log_path=build_log_path,
+        )
+        angle_records, angle_missing, angle_amb = assign_bonded_params_with_logs(
+            "angle",
+            angles,
+            atom_key_sets,
+            matcher_indexes,
+            build_log_path=build_log_path,
+        )
+        dihedral_records, dihedral_missing, dihedral_amb = assign_bonded_params_with_logs(
+            "dihedral",
+            dihedrals,
+            atom_key_sets,
+            matcher_indexes,
+            build_log_path=build_log_path,
+        )
+        improper_records, improper_missing, improper_amb = assign_bonded_params_with_logs(
+            "improper",
+            impropers,
+            atom_key_sets,
+            matcher_indexes,
+            build_log_path=build_log_path,
         )
 
-        init_build_log(
+        append_build_log(
             build_log_path,
             [
-                "build log",
-                f"structure: {structure}",
-                f"db_dir: {self.db_dir.expanduser().resolve()}",
-                f"hop_depth: {INTERNAL_HOP_DEPTH}",
-                "fallback_hops: " + ",".join(str(x) for x in INTERNAL_FALLBACK_HOPS),
+                f"[BOND] matched={len(bond_records)} missing={len(bond_missing)} ambiguous={len(bond_amb)}",
+                f"[ANGLE] matched={len(angle_records)} missing={len(angle_missing)} ambiguous={len(angle_amb)}",
+                f"[DIHEDRAL] matched={len(dihedral_records)} missing={len(dihedral_missing)} ambiguous={len(dihedral_amb)}",
+                f"[IMPROPER] matched={len(improper_records)} missing={len(improper_missing)} ambiguous={len(improper_amb)}",
             ],
         )
 
-        try:
-            mol = load_input_structure(structure)
-            if mol is None:
-                raise ValueError(f"RDKit failed to read structure file: {structure}")
-            if mol.GetNumConformers() == 0:
-                raise ValueError("Input structure has no 3D conformer coordinates")
-            hop2_env_to_atom_param = load_hop_param_db(db_paths["hop2_env"])
-            hop1_env_to_atom_param = load_hop_param_db(db_paths["hop1_env"])
-            hop0_env_to_atom_param = load_hop_param_db(db_paths["hop0_env"])
+        bond_type_rows = build_type_map(bond_records)
+        angle_type_rows = build_type_map(angle_records)
+        dihedral_type_rows = build_type_map(dihedral_records)
+        improper_type_rows = build_type_map(improper_records)
 
-            idx_rev, idx_imp, idx_rev_inv, idx_imp_center_inv = load_multiatom_db(
-                db_paths["multiatom"]
-            )
+        _write_lammps_data(
+            out_path=out,
+            mol=mol,
+            atom_records=atom_records,
+            atom_type_rows=atom_type_rows,
+            bond_records=bond_records,
+            angle_records=angle_records,
+            dihedral_records=dihedral_records,
+            improper_records=improper_records,
+            bond_type_rows=bond_type_rows,
+            angle_type_rows=angle_type_rows,
+            dihedral_type_rows=dihedral_type_rows,
+            improper_type_rows=improper_type_rows,
+            molecule_id=INTERNAL_MOLECULE_ID,
+            box_padding=INTERNAL_BOX_PADDING,
+        )
+    except Exception as exc:
+        append_build_log(build_log_path, [f"[ERROR] {type(exc).__name__}: {exc}"])
+        raise
 
-            missing_log_path = build_log_path
-            atom_records, atom_type_rows, fallback_hit_counter = build_atom_types(
-                mol,
-                hop2_env_to_atom_param,
-                hop1_env_to_atom_param,
-                hop0_env_to_atom_param,
-                INTERNAL_HOP_DEPTH,
-                fallback_hops=INTERNAL_FALLBACK_HOPS,
-                missing_log_path=missing_log_path,
-                structure_path=structure,
-                build_log_path=build_log_path,
-            )
-            write_atom_keytype_map(atom_keytype_map_path, atom_records)
-            append_build_log(
-                build_log_path,
-                [f"[ATOM] key_type_map={atom_keytype_map_path}"],
-            )
-            atom_key_sets = {r["atom_id"]: set(r["global_key_ids"]) for r in atom_records}
-
-            bonds, angles, dihedrals, impropers = enumerate_terms(mol)
-
-            bond_records, bond_missing, bond_amb = assign_multiatom_params(
-                "bond",
-                bonds,
-                atom_key_sets,
-                idx_rev,
-                idx_imp,
-                idx_rev_inv,
-                idx_imp_center_inv,
-                build_log_path=build_log_path,
-            )
-            angle_records, angle_missing, angle_amb = assign_multiatom_params(
-                "angle",
-                angles,
-                atom_key_sets,
-                idx_rev,
-                idx_imp,
-                idx_rev_inv,
-                idx_imp_center_inv,
-                build_log_path=build_log_path,
-            )
-            dihedral_records, dihedral_missing, dihedral_amb = assign_multiatom_params(
-                "dihedral",
-                dihedrals,
-                atom_key_sets,
-                idx_rev,
-                idx_imp,
-                idx_rev_inv,
-                idx_imp_center_inv,
-                build_log_path=build_log_path,
-            )
-            improper_records, improper_missing, improper_amb = assign_multiatom_params(
-                "improper",
-                impropers,
-                atom_key_sets,
-                idx_rev,
-                idx_imp,
-                idx_rev_inv,
-                idx_imp_center_inv,
-                build_log_path=build_log_path,
-            )
-
-            append_build_log(
-                build_log_path,
-                [
-                    f"[BOND] matched={len(bond_records)} missing={len(bond_missing)} ambiguous={len(bond_amb)}",
-                    f"[ANGLE] matched={len(angle_records)} missing={len(angle_missing)} ambiguous={len(angle_amb)}",
-                    f"[DIHEDRAL] matched={len(dihedral_records)} missing={len(dihedral_missing)} ambiguous={len(dihedral_amb)}",
-                    f"[IMPROPER] matched={len(improper_records)} missing={len(improper_missing)} ambiguous={len(improper_amb)}",
-                ],
-            )
-
-            bond_type_rows = build_type_map(bond_records)
-            angle_type_rows = build_type_map(angle_records)
-            dihedral_type_rows = build_type_map(dihedral_records)
-            improper_type_rows = build_type_map(improper_records)
-
-            _write_lammps_data(
-                out_path=out,
-                mol=mol,
-                atom_records=atom_records,
-                atom_type_rows=atom_type_rows,
-                bond_records=bond_records,
-                angle_records=angle_records,
-                dihedral_records=dihedral_records,
-                improper_records=improper_records,
-                bond_type_rows=bond_type_rows,
-                angle_type_rows=angle_type_rows,
-                dihedral_type_rows=dihedral_type_rows,
-                improper_type_rows=improper_type_rows,
-                molecule_id=self.molecule_id,
-                box_padding=self.box_padding,
-            )
-        except Exception as exc:
-            append_build_log(build_log_path, [f"[ERROR] {type(exc).__name__}: {exc}"])
-            raise
-
-        return {
-            "atoms": len(atom_records),
-            "bonds": len(bond_records),
-            "angles": len(angle_records),
-            "dihedrals": len(dihedral_records),
-            "impropers": len(improper_records),
-            "impropers_missing": len(improper_missing),
-            "fallback_hits": fallback_hit_counter,
-        }
+    return {
+        "atoms": len(atom_records),
+        "bonds": len(bond_records),
+        "angles": len(angle_records),
+        "dihedrals": len(dihedral_records),
+        "impropers": len(improper_records),
+        "impropers_missing": len(improper_missing),
+        "fallback_hits": fallback_hit_counter,
+    }
 
 

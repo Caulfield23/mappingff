@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
+"""Atom-level environment matching and fallback assignment logic."""
+
 import json
 from collections import defaultdict
 
 from rdkit import Chem
 
-from macromapff.domain.env import json_cell
-from macromapff.domain.env_features import EnvFeatureBuilder
+from macromapff.domain.env_key_codec import json_cell
+from macromapff.domain.env_key_match import make_env_key
+from macromapff.domain.env_key_match import precompute_atom_context
 
 
-ENV_INDEX_COLUMNS = [
+ENV_MATCH_COLUMNS = [
     "z",
     "formal_charge",
     "aromatic",
@@ -27,7 +30,7 @@ ENV_INDEX_COLUMNS = [
 def _env_index_key_from_obj(obj: dict):
     """Convert env feature dict into the structured index tuple key."""
     key = []
-    for col in ENV_INDEX_COLUMNS:
+    for col in ENV_MATCH_COLUMNS:
         key.append(json_cell(obj.get(col, "")))
     return tuple(key)
 
@@ -35,7 +38,7 @@ def _env_index_key_from_obj(obj: dict):
 def _env_key_from_obj(obj: dict):
     """Serialize env feature dict into canonical compact JSON key."""
     norm = {}
-    for col in ENV_INDEX_COLUMNS:
+    for col in ENV_MATCH_COLUMNS:
         val = obj.get(col, "")
         if val == "" or val is None:
             continue
@@ -57,47 +60,23 @@ def _env_features_at_hop(features: dict, hop: int):
     return reduced
 
 
-def parse_fallback_hops(raw: str):
-    """Parse comma-separated fallback hop list into unique ordered tuple."""
-    if raw is None:
-        return tuple()
-    items = []
-    for token in str(raw).split(","):
-        token = token.strip()
-        if not token:
-            continue
-        hop = int(token)
-        if hop < 0:
-            raise ValueError(f"Fallback hop must be >= 0; got: {hop}")
-        if hop not in items:
-            items.append(hop)
-    return tuple(items)
-
-
-def build_atom_types_core(
+def build_atom_match(
     mol: Chem.Mol,
     hop2_env_to_atom_param: dict,
     hop1_env_to_atom_param: dict,
     hop0_env_to_atom_param: dict,
-    hop_depth: int,
-    fallback_hops=(),
+    fallback_hops,
 ):
     """Assign atom parameter payloads by exact and fallback env matching."""
-    env_builder = EnvFeatureBuilder()
-    atom_context = env_builder.precompute_atom_context(mol)
+    atom_context = precompute_atom_context(mol)
 
     atom_records = []
     missing = []
     fallback_hit_counter = defaultdict(int)
-    struct_key_cache = {}
 
     def _lookup_params(db, features: dict, hop: int):
         """Lookup one atom's params from env-index and env-key maps."""
-        cache_key = (id(features), hop)
-        reduced = struct_key_cache.get(cache_key)
-        if reduced is None:
-            reduced = _env_features_at_hop(features, hop)
-            struct_key_cache[cache_key] = reduced
+        reduced = _env_features_at_hop(features, hop)
 
         env_key = _env_key_from_obj(reduced)
         env_hit = db["env"].get(env_key)
@@ -109,10 +88,9 @@ def build_atom_types_core(
 
     for atom_idx in range(mol.GetNumAtoms()):
         atom = mol.GetAtomWithIdx(atom_idx)
-        env_key_raw, env_features = env_builder.make_env_key(
+        env_key_raw, env_features = make_env_key(
             mol,
             atom,
-            hop_depth=hop_depth,
             atom_ctx=atom_context.get(atom_idx),
         )
         params = _lookup_params(hop2_env_to_atom_param, env_features, 2)

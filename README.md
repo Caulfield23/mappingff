@@ -1,113 +1,131 @@
 # MacroMapFF
 
-MacroMapFF is an open-source molecular parameterization workflow that builds atom/multi-atom parameter databases from segment-level data and generates full LAMMPS data files from complete molecular structures.
+MacroMapFF is a local CLI tool that builds parameter databases from sample segments and generates parameterized LAMMPS data files for new molecules.
 
-## Project status
-
-- Version: v0.1.0 (initial open-source layout)
-- Current scope: working pipeline migration and repository standardization
-- Algorithm logic: unchanged from validated internal scripts
-
-## Why this structure
-
-This repository uses a hybrid pattern:
-
-- Python package (`src/macromapff`): for versioning, testing, extension, and reuse
-- CLI (`MacroMapFF`): for reproducible production workflows
-- Legacy bundle in `examples/ps_odms7poss_legacy`: fully isolated historical workflow and assets
-
-## Quick start
-
-### 1. Install
+## Installation
 
 ```bash
 python -m pip install -e .
 ```
 
-### 2. Build database from samples
+## CLI Commands
+
+All commands follow:
+
+```bash
+MacroMapFF <command> [arguments] [options]
+```
+
+### 1. `build-db`
+
+Build a full database from a sample folder.
+
+```bash
+MacroMapFF build-db <samples_dir> [--db-dir <db_dir>]
+```
+
+Arguments:
+- `samples_dir` (required): folder containing sample data.
+
+Options:
+- `--db-dir` (optional, default `./database`): output database directory.
+
+Examples:
 
 ```bash
 MacroMapFF build-db examples/ps_odms7poss_legacy
+MacroMapFF build-db /data/samples --db-dir /data/macro_db
 ```
 
-### 3. Append new samples (optional)
+### 2. `add-samples`
+
+Append new samples and rebuild merged global databases.
 
 ```bash
-MacroMapFF add-samples /path/to/new_samples_folder
+MacroMapFF add-samples <samples_dir> [--db-dir <db_dir>]
 ```
 
-`add-samples` writes sample `*_env` folders directly under `--db-dir` (same level as existing sample env folders), overwrites on module-name conflict, and then auto-rebuilds global databases by scanning all `*_env` folders.
+Arguments:
+- `samples_dir` (required): folder containing additional sample data.
 
-### 4. Parameterize a new molecule
+Options:
+- `--db-dir` (optional, default `./database`): existing database directory to update.
+
+Examples:
 
 ```bash
-MacroMapFF parameterize /path/to/new_molecule.mol
+MacroMapFF add-samples /data/new_samples
+MacroMapFF add-samples /data/new_samples --db-dir /data/macro_db
 ```
 
-### 5. Legacy example (reference only)
+### 3. `parameterize`
 
-The complete original runnable workflow is isolated in:
-
-- `examples/ps_odms7poss_legacy/`
-
-Run from its own scripts folder if you need the historical workflow:
+Generate a parameterized LAMMPS data file from one `.mol` structure.
 
 ```bash
-cd examples/ps_odms7poss_legacy/scripts
-./rebuild_databases.sh
-./generate_from_current_db.sh
+MacroMapFF parameterize <molecule.mol> [--db-dir <db_dir>] [--out <output.lmp>]
 ```
 
-## Repository layout
+Arguments:
+- `molecule.mol` (required): input molecule in `.mol` format.
 
-See the full documentation:
+Options:
+- `--db-dir` (optional, default `./database`): database directory to read.
+- `--out` (optional, default `<molecule_stem>_param.lmp`): output LAMMPS data file.
 
-- docs/OPEN_SOURCE_GUIDE_zh.md
-
-## Example assets
-
-All historical assets are now bundled under one isolated example:
-
-- `examples/ps_odms7poss_legacy/PS-oDMS7POSS.mol`
-- `examples/ps_odms7poss_legacy/segment1/`
-- `examples/ps_odms7poss_legacy/segment2/`
-- `examples/ps_odms7poss_legacy/segment3/`
-- `examples/ps_odms7poss_legacy/segment4/`
-- `examples/ps_odms7poss_legacy/outputs/`
-- `examples/ps_odms7poss_legacy/scripts/`
-
-This keeps the production source code (`src/`) and the legacy runnable snapshot completely separated.
-
-## Development workflow
-
-- Branch model: `main` + feature branches
-- CI on push/PR: install, CLI smoke test, pytest
-- Release trigger: git tag `v*` (build wheel/sdist artifacts)
-
-## Standard regression validation
-
-This project includes a fixed end-to-end regression test with local fixtures:
-
-- segment dataset: `tests/fixtures/standard/segdata`
-- target molecule: `tests/fixtures/standard/target/PS-oDMS7POSS.mol`
-
-Run:
+Examples:
 
 ```bash
-pytest tests/test_standard_validation.py -q
+MacroMapFF parameterize /data/target/PS-oDMS7POSS.mol
+MacroMapFF parameterize /data/target/PS-oDMS7POSS.mol --db-dir /data/macro_db
+MacroMapFF parameterize /data/target/PS-oDMS7POSS.mol --db-dir /data/macro_db --out /data/out/PS-oDMS7POSS_param.lmp
 ```
 
-This validates both core user workflows:
+## Typical Workflow
 
-1. Build merged mapping databases from all segment `.lammps.lmp` samples.
-2. Parameterize the target full molecule using the built database.
+1. Build an initial database:
 
-All build outputs are written to a fixed repository-local path for inspection:
+```bash
+MacroMapFF build-db examples/ps_odms7poss_legacy --db-dir ./database
+```
 
-- `tests/artifacts/standard/`
+2. Add new samples over time:
 
-This artifacts folder is ignored by Git, so results are easy to inspect locally and never uploaded to GitHub.
+```bash
+MacroMapFF add-samples /path/to/new_samples --db-dir ./database
+```
+
+3. Parameterize a new molecule:
+
+```bash
+MacroMapFF parameterize /path/to/new_molecule.mol --db-dir ./database --out /path/to/new_molecule_param.lmp
+```
+
+## Expected Outputs
+
+After `build-db` / `add-samples` in `--db-dir`:
+- `Global_AtomMap.csv`
+- `hop_env/hop2_KeyMap.csv`
+- `hop_env/hop1_KeyMap.csv`
+- `hop_env/hop0_KeyMap.csv`
+- `Global_BondedTerms.csv`
+
+After `parameterize`:
+- output LAMMPS file (default `<molecule_stem>_param.lmp`)
+- `parameterize.log`
+- `atom_index_key_types.csv`
+
+## Validation
+
+```bash
+pytest -q
+```
+
+## Developer Documentation
+
+- Internal architecture and module details:
+	- `docs/DEVELOPER_GUIDE.md`
 
 ## License
 
-MIT. See LICENSE.
+MIT (see LICENSE).

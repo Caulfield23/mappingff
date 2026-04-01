@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
+"""Output serializers for CSV artifacts and final LAMMPS data files."""
+
 import csv
 import json
 from pathlib import Path
+
+
+def _write_dict_rows(path: Path, fieldnames, rows, extrasaction: str = "ignore"):
+    """Write dictionary rows to CSV with a fixed header order."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction=extrasaction)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
 
 
 def _fmt_box(lo, hi):
@@ -14,25 +26,23 @@ def write_atom_env_csv(out_dir: Path, module: str, atom_rows):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     csv_path = out_dir / f"{module}_AtomMap.csv"
-    with csv_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "module",
-                "atom_index",
-                "atom_name",
-                "opls_type_id",
-                "opls_type_name",
-                "charge",
-                "sigma",
-                "epsilon",
-                "mass",
-                "env_key",
-            ],
-        )
-        writer.writeheader()
-        for row in atom_rows:
-            writer.writerow(row)
+    _write_dict_rows(
+        csv_path,
+        fieldnames=[
+            "module",
+            "atom_index",
+            "atom_name",
+            "opls_type_id",
+            "opls_type_name",
+            "charge",
+            "sigma",
+            "epsilon",
+            "mass",
+            "env_key",
+        ],
+        rows=atom_rows,
+        extrasaction="raise",
+    )
 
     return csv_path
 
@@ -56,12 +66,7 @@ def write_atom_keytype_map(out_path: Path, atom_records):
 
 def write_keymap_csv(path: Path, rows, fieldnames):
     """Write generic keymap-like dict rows to a CSV file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+    _write_dict_rows(path, fieldnames=fieldnames, rows=rows, extrasaction="ignore")
 
 
 def write_observed_csv(csv_path: Path, observed_list):
@@ -103,19 +108,14 @@ def write_observed_csv(csv_path: Path, observed_list):
             )
 
 
-def write_master_csv(path: Path, rows):
-    """Write merged multi-atom master key-type mapping CSV."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+def write_global_bonded_csv(path: Path, rows):
+    """Write merged global bonded key-type mapping CSV."""
     fieldnames = [
         "interaction_kind",
         "key_type_tuple",
         "coeff_param_sets",
     ]
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+    _write_dict_rows(path, fieldnames=fieldnames, rows=rows, extrasaction="ignore")
 
 
 def write_lammps_data(
@@ -246,45 +246,3 @@ def write_lammps_data(
         for idx, rec in enumerate(improper_records_out, start=1):
             i, j, k, l = rec["atom_ids"]
             f.write(f"{idx:8d} {rec['type_id']:6d} {i:6d} {j:6d} {k:6d} {l:6d}\n")
-
-
-class LammpsDataWriter:
-    """Object wrapper for writing one LAMMPS data target file."""
-
-    def __init__(self, out_path: Path, molecule_id: int, box_padding: float) -> None:
-        """Initialize writer with output path and box writing options."""
-        self.out_path = out_path
-        self.molecule_id = molecule_id
-        self.box_padding = box_padding
-
-    def write(
-        self,
-        mol,
-        atom_records,
-        atom_type_rows,
-        bond_records,
-        angle_records,
-        dihedral_records,
-        improper_records,
-        bond_type_rows,
-        angle_type_rows,
-        dihedral_type_rows,
-        improper_type_rows,
-    ):
-        """Write one fully parameterized molecule to LAMMPS data file."""
-        return write_lammps_data(
-            out_path=self.out_path,
-            mol=mol,
-            atom_records=atom_records,
-            atom_type_rows=atom_type_rows,
-            bond_records=bond_records,
-            angle_records=angle_records,
-            dihedral_records=dihedral_records,
-            improper_records=improper_records,
-            bond_type_rows=bond_type_rows,
-            angle_type_rows=angle_type_rows,
-            dihedral_type_rows=dihedral_type_rows,
-            improper_type_rows=improper_type_rows,
-            molecule_id=self.molecule_id,
-            box_padding=self.box_padding,
-        )

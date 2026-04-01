@@ -6,75 +6,49 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from macromapff.domain import ENV_SPLIT_COLUMNS
-from macromapff.domain import build_final_map
-from macromapff.domain import finalize_records
-from macromapff.io import write_keymap_csv
-from macromapff.io import write_keymap_log
+from macromapff.domain.env_key_codec import ENV_SPLIT_COLUMNS
+from macromapff.domain.keymap_merge import build_final_map
+from macromapff.domain.keymap_merge import finalize_records
+from macromapff.io.log import write_keymap_log
+from macromapff.io.output import write_keymap_csv
 
 
-def parse_module_spec(spec: str):
-    """Parse one module spec token into module name and input paths."""
-    parts = spec.split("::")
-    if len(parts) != 2:
-        raise ValueError(
-            f"Invalid --module-spec format: {spec}\n"
-            f"Expected: module_name::atom_env_csv"
-        )
-    module, atom_env_csv = parts
-    return module.strip(), Path(atom_env_csv).expanduser()
+def build_keymap(module_specs, out_prefix: Path, out_log: Path):
+    """Generate merged keymap CSV and companion merge diagnostics log."""
+    normalized_specs = list(module_specs)
+    merged = build_final_map(normalized_specs)
+    final_rows, type_rows = finalize_records(merged)
 
+    out_prefix = Path(out_prefix).expanduser()
+    final_csv = out_prefix.with_suffix(".csv")
+    final_log = Path(out_log).expanduser()
 
-class KeymapBuilder:
-    """Builds final env keymap and merge log across all modules."""
-
-    def __init__(self, module_specs) -> None:
-        """Normalize module spec inputs into a parsed spec list."""
-        parsed_specs = []
-        for spec in module_specs:
-            if isinstance(spec, str):
-                parsed_specs.append(parse_module_spec(spec))
-            else:
-                parsed_specs.append(spec)
-        self.module_specs = parsed_specs
-
-    def build(self, out_prefix: Path, out_log: Path | None = None):
-        """Generate merged keymap CSV and companion merge diagnostics log."""
-        merged = build_final_map(self.module_specs)
-        final_rows, type_rows = finalize_records(merged)
-
-        out_prefix = Path(out_prefix).expanduser()
-        final_csv = out_prefix.with_suffix(".csv")
-        final_log = (
-            Path(out_log).expanduser() if out_log is not None else out_prefix.with_suffix(".log")
-        )
-
-        write_keymap_csv(
-            final_csv,
-            final_rows,
-            [
-                "key_id",
-                "global_type_ids",
-                "z",
-                "formal_charge",
-                "aromatic",
-                "hybridization",
-                "degree",
-                "total_hs",
-                "in_ring",
-                "ring_count",
-                "neighbor_sig",
-                "bond_kinds",
-                "charge_mean",
-                "sigma_mean",
-                "epsilon_mean",
-                "mass_mean",
-                "hop1_shell",
-                "hop2_shell",
-            ],
-        )
-        write_keymap_log(final_log, self.module_specs, final_rows, type_rows)
-        return final_csv, final_log, final_rows, type_rows
+    write_keymap_csv(
+        final_csv,
+        final_rows,
+        [
+            "key_id",
+            "global_type_ids",
+            "z",
+            "formal_charge",
+            "aromatic",
+            "hybridization",
+            "degree",
+            "total_hs",
+            "in_ring",
+            "ring_count",
+            "neighbor_sig",
+            "bond_kinds",
+            "charge_mean",
+            "sigma_mean",
+            "epsilon_mean",
+            "mass_mean",
+            "hop1_shell",
+            "hop2_shell",
+        ],
+    )
+    write_keymap_log(final_log, normalized_specs, final_rows, type_rows)
+    return final_csv, final_log, final_rows, type_rows
 
 
 def _row_index_key_at_hop(row: dict, hop: int):
@@ -218,20 +192,13 @@ def write_hop_csv(rows, out_csv: Path):
             )
 
 
-class HopDatabaseBuilder:
-    """Builds hop2/hop1/hop0 fallback mapping CSV files."""
+def build_hop_databases(final_env_csv: Path, hop2_out: Path, hop1_out: Path, hop0_out: Path):
+    """Generate and write hop2/hop1/hop0 fallback mapping CSV files."""
+    hop2_rows = build_hop_map(final_env_csv, hop=2)
+    hop1_rows = build_hop_map(final_env_csv, hop=1)
+    hop0_rows = build_hop_map(final_env_csv, hop=0)
 
-    def __init__(self, final_env_csv: Path) -> None:
-        """Initialize builder with source final env keymap CSV."""
-        self.final_env_csv = final_env_csv
-
-    def build(self, hop2_out: Path, hop1_out: Path, hop0_out: Path):
-        """Generate and write all fallback hop databases in one call."""
-        hop2_rows = build_hop_map(self.final_env_csv, hop=2)
-        hop1_rows = build_hop_map(self.final_env_csv, hop=1)
-        hop0_rows = build_hop_map(self.final_env_csv, hop=0)
-
-        write_hop_csv(hop2_rows, hop2_out)
-        write_hop_csv(hop1_rows, hop1_out)
-        write_hop_csv(hop0_rows, hop0_out)
-        return hop2_rows, hop1_rows, hop0_rows
+    write_hop_csv(hop2_rows, hop2_out)
+    write_hop_csv(hop1_rows, hop1_out)
+    write_hop_csv(hop0_rows, hop0_out)
+    return hop2_rows, hop1_rows, hop0_rows
