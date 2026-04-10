@@ -1,0 +1,429 @@
+"""Molecular structure parsing using RDKit.
+
+This module provides the MolReader class for parsing .mol and .pdb files
+and extracting molecular graph information including atoms, bonds, and
+3D coordinates. It also provides functions for computing chemical environment
+descriptors at three levels of granularity (hop0, hop1, hop2).
+
+The three-level environment descriptor:
+    - hop0: Center atom properties + neighbor signatures (no 2nd-order neighbors)
+    - hop1: hop0 + detailed hop1 shell (first neighbors of neighbors)
+    - hop2: hop1 + detailed hop2 shell (second neighbors of neighbors)
+
+Each environment is encoded as a SHA-256 hex string via encode.py.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from rdkit import Chem
+from rdkit.Chem import rdchem, SanitizeMol
+
+from macromapff import encode
+
+
+class MolReader:
+    """Parse .mol/.pdb files and extract molecular graph.
+
+    Uses RDKit to parse molecular structure files and provides methods to
+    access atoms, bonds, coordinates, and compute chemical environment
+    descriptors at multiple granularities.
+
+    Attributes:
+        _path: Path to the molecule file.
+        _mol: RDKit Mol object (None if parsing failed).
+    """
+
+    def __init__(self, path: Path):
+        """Initialize MolReader with a molecule file.
+
+        Args:
+            path: Path to .mol or .pdb file.
+        """
+        self._path = Path(path)
+        self._mol: rdchem.Mol | None = None
+        self._parse()
+
+    def _parse(self) -> None:
+        """Parse the molecule file using RDKit.
+
+        Supports both .mol (MDL Molfile) and .pdb (PDB format) files.
+        Sanitization is performed after parsing to ensure implicit valence
+        and other computed properties are available.
+        """
+        suffix = self._path.suffix.lower()
+        if suffix == ".mol":
+            self._mol = Chem.MolFromMolFile(str(self._path), sanitize=False)
+        elif suffix == ".pdb":
+            self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False)
+        else:
+            raise ValueError(f"Unsupported file format: {suffix}")
+
+        if self._mol is not None:
+            SanitizeMol(self._mol)
+
+        if self._mol is None:
+            raise ValueError(f"Failed to parse {self._path}")
+
+    @property
+    def mol(self) -> rdchem.Mol:
+        """Get the RDKit Mol object.
+
+        Returns:
+            The RDKit molecule object.
+
+        Raises:
+            RuntimeError: If molecule not loaded.
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+        return self._mol
+
+    def getAtoms(self) -> list[dict]:
+        """Get all atoms as a list of dictionaries.
+
+        Each dictionary contains properties for one atom including index,
+        element symbol, atomic number, charge, degree, hybridization,
+        ring membership, and hydrogen count.
+
+        Returns:
+            List of atom records, each with keys:
+                - idx: 1-based atom index
+                - symbol: element symbol (e.g., 'C', 'O')
+                - atomic_num: atomic number
+                - formal_charge: formal charge
+                - degree: total degree (number of bonds)
+                - hybridization: hybridization state as string
+                - in_ring: whether atom is in a ring (0 or 1)
+                - ring_count: number of rings the atom participates in
+                - total_hs: total number of implicit hydrogens
+                - aromatic: whether atom is aromatic (0 or 1)
+                - chiral_tag: chiral tag as string
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        ring_info = self._mol.GetRingInfo()
+        atoms = []
+        for i, rd_atom in enumerate(self._mol.GetAtoms()):
+            # Count how many rings (of size 3-8) this atom participates in
+            atom_ring_count = sum(
+                1 for ring_size in range(3, 9)
+                if ring_info.IsAtomInRingOfSize(i, ring_size)
+            )
+            atoms.append({
+                "idx": i + 1,  # 1-based indexing for external use
+                "symbol": rd_atom.GetSymbol(),
+                "atomic_num": rd_atom.GetAtomicNum(),
+                "formal_charge": rd_atom.GetFormalCharge(),
+                "degree": rd_atom.GetTotalDegree(),
+                "hybridization": str(rd_atom.GetHybridization()),
+                "in_ring": int(rd_atom.IsInRing()),
+                "ring_count": atom_ring_count,
+                "total_hs": rd_atom.GetTotalNumHs(),
+                "aromatic": int(rd_atom.GetIsAromatic()),
+                " chiral_tag": str(rd_atom.GetChiralTag()),
+            })
+        return atoms
+
+    def getBonds(self) -> list[dict]:
+        """Get all bonds as a list of dictionaries.
+
+        Returns:
+            List of bond records, each with keys:
+                - idx: 1-based bond index
+                - a1: 1-based index of first atom
+                - a2: 1-based index of second atom
+                - bond_type: type as string (e.g., 'SINGLE', 'DOUBLE', 'AROMATIC')
+                - aromatic: whether bond is aromatic (0 or 1)
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        bonds = []
+        for i, rd_bond in enumerate(self._mol.GetBonds()):
+            bonds.append({
+                "idx": i + 1,
+                "a1": rd_bond.GetBeginAtomIdx() + 1,  # 1-based
+                "a2": rd_bond.GetEndAtomIdx() + 1,    # 1-based
+                "bond_type": str(rd_bond.GetBondType()),
+                "aromatic": int(rd_bond.GetIsAromatic()),
+            })
+        return bonds
+
+    def getCoords(self) -> dict[int, tuple[float, float, float]]:
+        """Get 3D coordinates for all atoms.
+
+        Returns:
+            Dictionary mapping 1-based atom index to (x, y, z) tuple.
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        coords = {}
+        conf = self._mol.GetConformer()
+        for i in range(self._mol.GetNumAtoms()):
+            pos = conf.GetAtomPosition(i)
+            coords[i + 1] = (pos.x, pos.y, pos.z)
+        return coords
+
+    def getAngles(self) -> list[dict]:
+        """Get all valence angles as a list of dictionaries.
+
+        An angle is defined by three atoms a1-a2-a3 where a2 is the center.
+        Derived by finding all atoms with at least 2 neighbors.
+
+        Returns:
+            List of angle records, each with keys:
+                - idx: 1-based angle index
+                - a1: 1-based index of first atom
+                - a2: 1-based index of center atom
+                - a3: 1-based index of third atom
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        angles = []
+        angle_idx = 1
+        for center_idx in range(self._mol.GetNumAtoms()):
+            center_atom = self._mol.GetAtomWithIdx(center_idx)
+            neighbors = center_atom.GetNeighbors()
+            if len(neighbors) < 2:
+                continue
+            # Get all pairs of neighbors to form angles
+            for i in range(len(neighbors)):
+                for j in range(i + 1, len(neighbors)):
+                    a1 = neighbors[i].GetIdx() + 1
+                    a2 = center_idx + 1
+                    a3 = neighbors[j].GetIdx() + 1
+                    angles.append({
+                        "idx": angle_idx,
+                        "a1": a1,
+                        "a2": a2,
+                        "a3": a3,
+                    })
+                    angle_idx += 1
+        return angles
+
+    def getDihedrals(self) -> list[dict]:
+        """Get all dihedral angles as a list of dictionaries.
+
+        A dihedral is defined by four atoms a1-a2-a3-a4 where the bonds
+        are a1-a2, a2-a3, a3-a4. Derived from all paths of length 3.
+
+        Returns:
+            List of dihedral records, each with keys:
+                - idx: 1-based dihedral index
+                - a1: 1-based index of first atom
+                - a2: 1-based index of second atom
+                - a3: 1-based index of third atom
+                - a4: 1-based index of fourth atom
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        dihedrals = []
+        dih_idx = 1
+        visited = set()
+        for bond in self._mol.GetBonds():
+            a2_idx = bond.GetBeginAtomIdx()
+            a3_idx = bond.GetEndAtomIdx()
+
+            a2_atom = self._mol.GetAtomWithIdx(a2_idx)
+            a3_atom = self._mol.GetAtomWithIdx(a3_idx)
+
+            # For a2, get neighbors excluding a3
+            for a1_neighbor in a2_atom.GetNeighbors():
+                a1_idx = a1_neighbor.GetIdx()
+                if a1_idx == a3_idx:
+                    continue
+                # For a3, get neighbors excluding a2
+                for a4_neighbor in a3_atom.GetNeighbors():
+                    a4_idx = a4_neighbor.GetIdx()
+                    if a4_idx == a2_idx:
+                        continue
+                    # Create canonical dihedral key (a1 < a4 to avoid duplicates)
+                    if a1_idx < a4_idx:
+                        key = (a1_idx, a2_idx, a3_idx, a4_idx)
+                    else:
+                        key = (a4_idx, a3_idx, a2_idx, a1_idx)
+                    if key in visited:
+                        continue
+                    visited.add(key)
+                    dihedrals.append({
+                        "idx": dih_idx,
+                        "a1": a1_idx + 1,
+                        "a2": a2_idx + 1,
+                        "a3": a3_idx + 1,
+                        "a4": a4_idx + 1,
+                    })
+                    dih_idx += 1
+        return dihedrals
+
+    def getImpropers(self) -> list[dict]:
+        """Get all improper angles as a list of dictionaries.
+
+        An improper is defined by a central atom and three substituents.
+        In standard organic molecules, impropers are typically defined for
+        trigonal planar atoms (like carbonyl carbons or aromatic carbons)
+        to enforce planarity.
+
+        This method extracts impropers from ring systems and known
+        functional group patterns where improper dihedrals are meaningful.
+
+        Returns:
+            List of improper records, each with keys:
+                - idx: 1-based improper index
+                - a1: 1-based index of center atom
+                - a2: 1-based index of second atom
+                - a3: 1-based index of third atom
+                - a4: 1-based index of fourth atom
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        impropers = []
+        imp_idx = 1
+        visited = set()
+
+        # Find atoms that could have impropers: sp2 carbons with 3 neighbors (carbonyl-like)
+        # or atoms in rings that need planarity constraints
+        for atom in self._mol.GetAtoms():
+            idx = atom.GetIdx()
+            symbol = atom.GetSymbol()
+            neighbors = atom.GetNeighbors()
+            if len(neighbors) != 3:
+                continue
+            # For now, create impropers for atoms with exactly 3 neighbors
+            # that are likely to need planarity constraints
+            neighbor_indices = sorted([n.GetIdx() for n in neighbors])
+
+            # Create canonical key
+            key = (idx, neighbor_indices[0], neighbor_indices[1], neighbor_indices[2])
+            if key in visited:
+                continue
+            visited.add(key)
+
+            impropers.append({
+                "idx": imp_idx,
+                "a1": idx + 1,
+                "a2": neighbor_indices[0] + 1,
+                "a3": neighbor_indices[1] + 1,
+                "a4": neighbor_indices[2] + 1,
+            })
+            imp_idx += 1
+
+        return impropers
+
+    def computeHop0Env(self, atomIdx: int) -> dict:
+        """Compute hop0 level environment for an atom.
+
+        Hop0 is the coarsest environment descriptor. It captures:
+            - Center atom properties (z, charge, degree, hybridization, ring membership)
+            - Neighbor signatures: "atomicNum:bondType:formalCharge" for each neighbor
+            - Bond kind list: sorted list of S/D/T/A/U codes for each bond
+
+        This level is used for bonded parameter matching (bond/angle/dihedral/improper)
+        because it captures the immediate chemical environment without 2nd-order details.
+
+        Args:
+            atomIdx: 1-based atom index.
+
+        Returns:
+            Dictionary with keys:
+                - z: atomic number
+                - formal_charge: formal charge
+                - degree: total degree
+                - hybridization: hybridization as string
+                - in_ring: 0 or 1
+                - ring_count: number of rings atom participates in
+                - total_hs: number of implicit hydrogens
+                - neighbor_sig: sorted list of "z:bondType:charge" strings
+                - bond_kinds: sorted list of S/D/T/A/U codes
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)  # RDKit uses 0-based
+        return encode.encodeAtomEnvHop0(self._mol, rd_atom)
+
+    def computeHop1Env(self, atomIdx: int) -> dict:
+        """Compute hop1 level environment for an atom.
+
+        Hop1 extends hop0 by adding the hop1_shell, which contains detailed
+        properties of first neighbors (their element, aromaticity, degree, etc.).
+
+        This level is used for the first fallback step in atom typing when
+        no exact hop2 match is found.
+
+        Args:
+            atomIdx: 1-based atom index.
+
+        Returns:
+            Dictionary with all hop0 keys plus:
+                - hop1_shell: list of neighbor descriptors, each with z, ar, deg, fc, h, ring, bt
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)
+        return encode.encodeAtomEnvHop1(self._mol, rd_atom)
+
+    def computeHop2Env(self, atomIdx: int) -> dict:
+        """Compute hop2 level environment for an atom.
+
+        Hop2 extends hop1 by adding the hop2_shell, which contains detailed
+        properties of second neighbors (neighbors of neighbors, excluding the
+        center and hop1 atoms).
+
+        This is the finest-grained environment descriptor and provides the
+        most specific atom type identification when an exact match exists.
+
+        Args:
+            atomIdx: 1-based atom index.
+
+        Returns:
+            Dictionary with all hop1 keys plus:
+                - hop2_shell: list of 2nd-order neighbor descriptors
+        """
+        if self._mol is None:
+            raise RuntimeError("Molecule not loaded")
+
+        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)
+        return encode.encodeAtomEnvHop2(self._mol, rd_atom)
+
+
+# ── Convenience Re-exports from encode.py ──────────────────────────────────────
+
+
+def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str]:
+    """Compute hop2, hop1, and hop0 keys for an atom.
+
+    This is a convenience wrapper that:
+        1. Computes hop0/hop1/hop2 environments using MolReader
+        2. Calls encode.computeHopKeys on the hop2 env dict
+
+    Args:
+        molReader: MolReader instance with loaded molecule.
+        atomIdx: 1-based atom index.
+
+    Returns:
+        Tuple of (hop2Key, hop1Key, hop0Key), all 64-char hex strings.
+    """
+    envHop2 = molReader.computeHop2Env(atomIdx)
+    return encode.computeHopKeys(envHop2)
+
+
+def encodeEnvKey(envDict: dict) -> str:
+    """Encode an environment dictionary as a SHA-256 hex string.
+
+    Delegates to encode.encodeEnvKey.
+
+    Args:
+        envDict: Environment dictionary to encode.
+
+    Returns:
+        64-character SHA-256 hexadecimal string.
+    """
+    return encode.encodeEnvKey(envDict)

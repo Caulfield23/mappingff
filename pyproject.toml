@@ -7,7 +7,7 @@ name = "MacroMapFF"
 version = "0.1.0"
 description = "Molecular parameterization pipeline for generating LAMMPS data from segment databases"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.7"
 license = { text = "MIT" }
 authors = [
   { name = "MacroMapFF contributors" }
