@@ -68,17 +68,19 @@ class MacroMapDB:
         if self._conn is None:
             raise RuntimeError("Database not loaded")
         cursor = self._conn.cursor()
-        cursor.execute("SELECT hop2_key, sigma_list, epsilon_list FROM atom_types")
+        cursor.execute("SELECT hop2_key, sigma_list, epsilon_list, charge_list FROM atom_types")
         for row in cursor.fetchall():
             sigma_list = json.loads(row["sigma_list"])
             epsilon_list = json.loads(row["epsilon_list"])
+            charge_list = json.loads(row["charge_list"])
             avg_sigma = round(sum(sigma_list) / len(sigma_list), 7)
             avg_epsilon = round(sum(epsilon_list) / len(epsilon_list), 3)
+            avg_charge = round(sum(charge_list) / len(charge_list), 6)
             cursor.execute("""
                 UPDATE atom_types
-                SET sigma = ?, epsilon = ?
+                SET sigma = ?, epsilon = ?, charge = ?
                 WHERE hop2_key = ?
-            """, (avg_sigma, avg_epsilon, row["hop2_key"]))
+            """, (avg_sigma, avg_epsilon, avg_charge, row["hop2_key"]))
 
     def _finalizeBondedParams(self) -> None:
         """Compute averaged bonded parameters from lists and update scalar columns."""
@@ -196,6 +198,8 @@ class MacroMapDB:
                 sigma_list TEXT,
                 epsilon REAL,
                 epsilon_list TEXT,
+                charge REAL,
+                charge_list TEXT,
                 source TEXT,
                 hop2_key TEXT PRIMARY KEY,
                 hop1_key TEXT,
@@ -294,20 +298,22 @@ class MacroMapDB:
         existing = cursor.fetchone()
 
         if existing is not None:
-            # hop2Key exists - merge sigma_list, epsilon_list, and source
+            # hop2Key exists - merge sigma_list, epsilon_list, charge_list, and source
             existing_sigma = json.loads(existing["sigma_list"])
             existing_epsilon = json.loads(existing["epsilon_list"])
+            existing_charge = json.loads(existing["charge_list"])
             existing_sources = json.loads(existing["source"])
 
             new_sigma = existing_sigma + [info["sigma"]]
             new_epsilon = existing_epsilon + [info["epsilon"]]
+            new_charge = existing_charge + [info["charge"]]
             new_sources = list(set(existing_sources) | set(info["source"]))
 
             cursor.execute("""
                 UPDATE atom_types
-                SET epsilon_list = ?, sigma_list = ?, source = ?
+                SET epsilon_list = ?, sigma_list = ?, charge_list = ?, source = ?
                 WHERE hop2_key = ?
-            """, (json.dumps(new_epsilon), json.dumps(new_sigma), json.dumps(new_sources), hop2Key))
+            """, (json.dumps(new_epsilon), json.dumps(new_sigma), json.dumps(new_charge), json.dumps(new_sources), hop2Key))
         else:
             # hop2Key is new - get next available lammps_type
             cursor.execute("SELECT MAX(lammps_type) FROM atom_types")
@@ -318,8 +324,9 @@ class MacroMapDB:
             cursor.execute("""
                 INSERT INTO atom_types
                 (hop2_key, element, hop1_key, hop0_key, lammps_type,
-                 mass, sigma, epsilon, epsilon_list, sigma_list, source, hop2_env)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 mass, sigma, epsilon, sigma_list, epsilon_list,
+                 charge, charge_list, source, hop2_env)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 hop2Key,
                 info["element"],
@@ -329,8 +336,10 @@ class MacroMapDB:
                 round(info["mass"], 3),
                 round(info["sigma"], 7),
                 round(info["epsilon"], 3),
-                json.dumps([round(info["epsilon"], 3)]),
                 json.dumps([round(info["sigma"], 7)]),
+                json.dumps([round(info["epsilon"], 3)]),
+                round(info.get("charge", 0.0), 6),
+                json.dumps([round(info.get("charge", 0.0), 6)]),
                 json.dumps(info["source"]),
                 json.dumps(info.get("hop2_env", {})),
             ))
@@ -361,8 +370,10 @@ class MacroMapDB:
             "mass": row["mass"],
             "sigma": row["sigma"],
             "epsilon": row["epsilon"],
+            "charge": row["charge"],
             "sigma_list": json.loads(row["sigma_list"]),
             "epsilon_list": json.loads(row["epsilon_list"]),
+            "charge_list": json.loads(row["charge_list"]),
             "source": json.loads(row["source"]),
             "hop2_env": json.loads(row["hop2_env"]) if row["hop2_env"] else {},
         }
@@ -903,6 +914,7 @@ class MacroMapDB:
                 "mass": row["mass"],
                 "sigma": row["sigma"],
                 "epsilon": row["epsilon"],
+                "charge": row["charge"],
                 "source": json.loads(row["source"]),
             }
         return result

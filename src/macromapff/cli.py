@@ -130,6 +130,7 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
                 "mass": mass[1] if mass else 0.0,
                 "sigma": pairCoeff[2] if pairCoeff else 0.0,
                 "epsilon": pairCoeff[1] if pairCoeff else 0.0,
+                "charge": atomRecord[3],  # charge from LAMMPS file (4th column)
                 "source": [f"{segName}_{atomIdx}"],
             })
 
@@ -631,6 +632,7 @@ def parameterize(
                     "mass": info["mass"],
                     "sigma": info["sigma"],
                     "epsilon": info["epsilon"],
+                    "charge": info["charge"],
                     "lammps_type": lammpsType,  # Track original for debugging
                 }
             else:
@@ -641,6 +643,7 @@ def parameterize(
                     "mass": 0.0,
                     "sigma": 0.0,
                     "epsilon": 0.0,
+                    "charge": 0.0,
                     "lammps_type": lammpsType,
                 }
 
@@ -702,7 +705,8 @@ def parameterize(
         lammpsType = atomTypeMap[atomIdx]
         outputType = typeMapping[lammpsType]
         x, y, z = coords[atomIdx]
-        lmpData.atom_records.append((atomIdx, 1, outputType, 0.0, x, y, z))
+        charge = typeInfo[outputType].get("charge", 0.0)
+        lmpData.atom_records.append((atomIdx, 1, outputType, charge, x, y, z))
 
     # Bond records
     for bond in bonds:
