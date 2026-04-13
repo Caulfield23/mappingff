@@ -298,63 +298,69 @@ def generateLammps(data: LammpsData, outPath: Path) -> None:
     lines.append(f"{data.improper_types:>10} improper types")
     lines.append("")
 
-    # Box dimensions
-    lines.append(f"{data.xlo:<12} {data.xhi:<12} xlo xhi")
-    lines.append(f"{data.ylo:<12} {data.yhi:<12} ylo yhi")
-    lines.append(f"{data.zlo:<12} {data.zhi:<12} zlo zhi")
+    # Box dimensions (6 decimal places)
+    lines.append(f"{data.xlo:>12.6f} {data.xhi:>12.6f} xlo xhi")
+    lines.append(f"{data.ylo:>12.6f} {data.yhi:>12.6f} ylo yhi")
+    lines.append(f"{data.zlo:>12.6f} {data.zhi:>12.6f} zlo zhi")
     lines.append("")
 
-    # Masses
+    # Masses (3 decimal places)
     lines.append("Masses")
     lines.append("")
     for type_id, mass in data.masses:
-        lines.append(f"{type_id:>10} {mass:<12}")
+        lines.append(f"{type_id:>10} {mass:>10.3f}")
     lines.append("")
 
-    # Pair Coeffs
+    # Pair Coeffs (epsilon: 3 decimal places, sigma: 7 decimal places)
     lines.append("Pair Coeffs")
     lines.append("")
     for type_id, epsilon, sigma in data.pair_coeffs:
-        lines.append(f"{type_id:>10} {epsilon:<12} {sigma:<12}")
+        lines.append(f"{type_id:>10} {epsilon:>14.3f} {sigma:>14.7f}")
     lines.append("")
 
-    # Bond Coeffs
+    # Bond Coeffs (K0, R0: 4 decimal places)
     lines.append("Bond Coeffs")
     lines.append("")
     for type_id, k, r0 in data.bond_coeffs:
-        lines.append(f"{type_id:>10} {k:<12} {r0:<12}")
+        lines.append(f"{type_id:>10} {k:>14.4f} {r0:>14.4f}")
     lines.append("")
 
-    # Angle Coeffs
+    # Angle Coeffs (K0, angle0: 3 decimal places)
     lines.append("Angle Coeffs")
     lines.append("")
     for type_id, k, theta0 in data.angle_coeffs:
-        lines.append(f"{type_id:>10} {k:<12} {theta0:<12}")
+        lines.append(f"{type_id:>10} {k:>14.3f} {theta0:>14.3f}")
     lines.append("")
 
-    # Dihedral Coeffs
+    # Dihedral Coeffs (V1-V4: 3 decimal places)
     lines.append("Dihedral Coeffs")
     lines.append("")
     for rec in data.dihedral_coeffs:
-        line = "".join(f"{x:>12}" for x in rec)
+        line = "".join(f"{x:>14.3f}" for x in rec)
         lines.append(line)
     lines.append("")
 
-    # Improper Coeffs
+    # Improper Coeffs (V2/2: 3 decimal places, last two fields are integers)
     lines.append("Improper Coeffs")
     lines.append("")
     for rec in data.improper_coeffs:
-        line = "".join(f"{x:>12}" for x in rec)
-        lines.append(line)
+        # rec[0] is type_id, rec[1:] are coeffs
+        # last two fields are integers
+        formatted = [f"{rec[0]:>10}"]
+        for x in rec[1:-2]:
+            formatted.append(f"{x:>14.3f}")
+        formatted.append(f"{int(rec[-2]):>14}")
+        formatted.append(f"{int(rec[-1]):>14}")
+        lines.append("".join(formatted))
     lines.append("")
 
-    # Atoms
+    # Atoms (charge: 6 decimal places, x/y/z: 5 decimal places)
     lines.append("Atoms")
     lines.append("")
     for atom_id, mol_tag, type_id, charge, x, y, z in data.atom_records:
         lines.append(
-            f"{atom_id:>10} {mol_tag:>5} {type_id:>5} {charge:>12} "
-            f"{x:>12} {y:>12} {z:>12}"
+            f"{atom_id:>10} {mol_tag:>5} {type_id:>5} {charge:>14.6f} "
+            f"{x:>14.5f} {y:>14.5f} {z:>14.5f}"
         )
     lines.append("")
 

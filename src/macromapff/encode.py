@@ -52,20 +52,17 @@ def encodeAtomEnvHop0(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
     """
     ring_info = mol.GetRingInfo()
     atom_idx = atom.GetIdx()
-    atom_ring_count = sum(
-        1 for ring_size in range(3, 9)
-        if ring_info.IsAtomInRingOfSize(atom_idx, ring_size)
-    )
+    ring_count = ring_info.NumAtomRings(atom_idx)
 
     return {
         "z": atom.GetAtomicNum(),
         "formal_charge": atom.GetFormalCharge(),
         "aromatic": int(atom.GetIsAromatic()),
-        "degree": atom.GetTotalDegree(),
+        "degree": atom.GetDegree(),
         "hybridization": str(atom.GetHybridization()),
         "in_ring": int(atom.IsInRing()),
-        "ring_count": atom_ring_count,
-        "total_hs": atom.GetTotalNumHs(),
+        "ring_count": ring_count,
+        "total_hs": atom.GetTotalNumHs(includeNeighbors=True),
         "neighbor_sig": _neighborSignature(mol, atom),
         "bond_kinds": _bondKindList(mol, atom),
     }
@@ -146,10 +143,12 @@ def _neighborSignature(mol: rdchem.Mol, atom: rdchem.Atom) -> list[str]:
     """Generate neighbor signature list for an atom.
 
     Each neighbor contributes a signature string in the format:
-    "atomicNum:bondType:formalCharge"
+    "atomicNum:bondType:aromaticFlag"
 
     The bond type uses single-character codes: S, D, T, A, U
     to match the legacy format used in the reference implementation.
+
+    The aromaticFlag is 1 if the neighbor is aromatic, 0 otherwise.
 
     The signatures are sorted to ensure canonical ordering regardless of
     the order in which neighbors are enumerated by RDKit.
@@ -176,7 +175,7 @@ def _neighborSignature(mol: rdchem.Mol, atom: rdchem.Atom) -> list[str]:
             bond_code = "A"
         else:
             bond_code = "U"
-        sig = f"{neighbor.GetAtomicNum()}:{bond_code}:{neighbor.GetFormalCharge()}"
+        sig = f"{neighbor.GetAtomicNum()}:{bond_code}:{int(neighbor.GetIsAromatic())}"
         sigs.append(sig)
     sigs.sort()
     return sigs
@@ -247,18 +246,16 @@ def _shellNeighbors(mol: rdchem.Mol, atom: rdchem.Atom, depth: int) -> list[dict
     if depth == 1:
         shell = []
         for neighbor in atom.GetNeighbors():
-            bond = mol.GetBondBetweenAtoms(atom.GetIdx(), neighbor.GetIdx())
             entry = {
                 "z": neighbor.GetAtomicNum(),
+                "fc": neighbor.GetFormalCharge(),
                 "ar": int(neighbor.GetIsAromatic()),
                 "deg": neighbor.GetTotalDegree(),
-                "fc": neighbor.GetFormalCharge(),
-                "h": neighbor.GetTotalNumHs(),
+                "h": neighbor.GetTotalNumHs(includeNeighbors=True),
                 "ring": int(neighbor.IsInRing()),
-                "bt": str(bond.GetBondType()),
             }
             shell.append(entry)
-        shell.sort(key=lambda x: (x["z"], x["bt"], x["ar"], x["deg"]))
+        shell.sort(key=lambda x: (x["z"], x["fc"], x["ar"], x["deg"], x["h"], x["ring"]))
         return shell
 
     elif depth == 2:
@@ -272,18 +269,16 @@ def _shellNeighbors(mol: rdchem.Mol, atom: rdchem.Atom, depth: int) -> list[dict
                     continue
                 if hop2_neighbor.GetIdx() == atom.GetIdx():
                     continue
-                bond = mol.GetBondBetweenAtoms(hop1_neighbor.GetIdx(), hop2_neighbor.GetIdx())
                 entry = {
                     "z": hop2_neighbor.GetAtomicNum(),
+                    "fc": hop2_neighbor.GetFormalCharge(),
                     "ar": int(hop2_neighbor.GetIsAromatic()),
                     "deg": hop2_neighbor.GetTotalDegree(),
-                    "fc": hop2_neighbor.GetFormalCharge(),
-                    "h": hop2_neighbor.GetTotalNumHs(),
+                    "h": hop2_neighbor.GetTotalNumHs(includeNeighbors=True),
                     "ring": int(hop2_neighbor.IsInRing()),
-                    "bt": str(bond.GetBondType()) if bond else "U",
                 }
                 shell.append(entry)
-        shell.sort(key=lambda x: (x["z"], x["bt"], x["ar"], x["deg"]))
+        shell.sort(key=lambda x: (x["z"], x["fc"], x["ar"], x["deg"], x["h"], x["ring"]))
         return shell
 
     else:

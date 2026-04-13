@@ -80,24 +80,26 @@ class TestMacroMapDB:
 
     def test_new_db_has_structure(self, tmp_path):
         """New empty db has correct structure."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
-        assert "atom_types" in db._data
-        assert "hop1_keymap" in db._data
-        assert "hop0_keymap" in db._data
-        assert "bond_params" in db._data
-        assert "angle_params" in db._data
-        assert "dihedral_params" in db._data
-        assert "improper_params" in db._data
+        assert db._conn is not None
+        assert len(db.atomTypes) == 0
+        assert len(db.hop1Keymap) == 0
+        assert len(db.hop0Keymap) == 0
+        assert len(db.bondParams) == 0
+        assert len(db.angleParams) == 0
+        assert len(db.dihedralParams) == 0
+        assert len(db.improperParams) == 0
 
     def test_insert_and_lookup_atom_type(self, tmp_path):
         """Can insert and retrieve atom type."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertAtomType("key123", {
             "element": "C",
+            "hop1_key": "hop1key",
             "hop0_key": "hop0key",
-            "lammps_type": 5,
+            "hop2_env": {"z": 6, "neighbor_sig": "C2"},
             "mass": 12.011,
             "sigma": 3.5,
             "epsilon": 0.066,
@@ -106,16 +108,19 @@ class TestMacroMapDB:
         result = db.getAtomType("key123")
         assert result is not None
         assert result["element"] == "C"
+        assert result["hop1_key"] == "hop1key"
+        assert result["hop2_env"]["z"] == 6
 
     def test_save_and_reload(self, tmp_path):
         """DB can be saved and reloaded."""
-        db_path = tmp_path / "db.pkl"
+        db_path = tmp_path / "db.db"
         db = MacroMapDB(db_path)
         db.load()
         db.insertAtomType("key456", {
             "element": "O",
+            "hop1_key": "hop1key2",
             "hop0_key": "hop0key2",
-            "lammps_type": 3,
+            "hop2_env": {"z": 8, "neighbor_sig": "C1"},
             "mass": 15.999,
             "sigma": 3.0,
             "epsilon": 0.12,
@@ -129,21 +134,22 @@ class TestMacroMapDB:
 
     def test_hop1_keymap_insert(self, tmp_path):
         """Can insert hop1 key mapping."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
-        db.insertHop1Key("hop1key", "hop0key", 4)
+        db.insertHop1Key("hop1key", 4)
         assert "hop1key" in db.hop1Keymap
+        assert db.hop1Keymap["hop1key"]["lammps_types"] == [4]
 
     def test_hop0_keymap_insert(self, tmp_path):
         """Can insert hop0 key mapping."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertHop0Key("hop0key", 4)
         assert "hop0key" in db.hop0Keymap
 
     def test_bond_param_insert_and_lookup(self, tmp_path):
         """Can insert and lookup bond parameters."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertBondParam(("a", "b"), {"k": 340.0, "r0": 1.09})
         result = db.lookupBondParam("a", "b")
@@ -152,7 +158,7 @@ class TestMacroMapDB:
 
     def test_bond_param_canonical_order(self, tmp_path):
         """Bond param lookup is order-independent."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertBondParam(("a", "b"), {"k": 340.0, "r0": 1.09})
         assert db.lookupBondParam("a", "b") is not None
@@ -160,7 +166,7 @@ class TestMacroMapDB:
 
     def test_angle_param_canonical_order(self, tmp_path):
         """Angle param lookup is order-independent on outer atoms."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertAngleParam(("a", "b", "c"), {"k": 50.0, "theta0": 110.0})
         assert db.lookupAngleParam("a", "b", "c") is not None
@@ -168,7 +174,7 @@ class TestMacroMapDB:
 
     def test_dihedral_param_canonical_order(self, tmp_path):
         """Dihedral param lookup is order-independent on outer atoms."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertDihedralParam(("a", "b", "c", "d"), {"coeffs": [0, 0, 0.3, 0]})
         assert db.lookupDihedralParam("a", "b", "c", "d") is not None
@@ -176,7 +182,7 @@ class TestMacroMapDB:
 
     def test_improper_param_center_fixed(self, tmp_path):
         """Improper param lookup fixes center atom."""
-        db = MacroMapDB(tmp_path / "db.pkl")
+        db = MacroMapDB(tmp_path / "db.db")
         db.load()
         db.insertImproperParam(("a", "b", "c", "d"), {"coeffs": [0, -1, 2]})
         # Center a is fixed, others sorted

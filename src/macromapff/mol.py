@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rdkit import Chem
-from rdkit.Chem import rdchem, SanitizeMol
+from rdkit.Chem import rdchem, SanitizeMol, rdDetermineBonds
 
 from macromapff import encode
 
@@ -49,6 +49,9 @@ class MolReader:
         """Parse the molecule file using RDKit.
 
         Supports both .mol (MDL Molfile) and .pdb (PDB format) files.
+        For PDB files, DetermineBondOrders is used to infer bond orders
+        from geometry since PDB CONECT records don't encode bond types.
+
         Sanitization is performed after parsing to ensure implicit valence
         and other computed properties are available.
         """
@@ -56,7 +59,10 @@ class MolReader:
         if suffix == ".mol":
             self._mol = Chem.MolFromMolFile(str(self._path), sanitize=False)
         elif suffix == ".pdb":
-            self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False)
+            self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
+            if self._mol is not None:
+                # Infer bond orders from geometry for PDB files
+                rdDetermineBonds.DetermineBondOrders(self._mol, charge=0)
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
 
@@ -121,7 +127,7 @@ class MolReader:
                 "hybridization": str(rd_atom.GetHybridization()),
                 "in_ring": int(rd_atom.IsInRing()),
                 "ring_count": atom_ring_count,
-                "total_hs": rd_atom.GetTotalNumHs(),
+                "total_hs": rd_atom.GetTotalNumHs(includeNeighbors=True),
                 "aromatic": int(rd_atom.GetIsAromatic()),
                 " chiral_tag": str(rd_atom.GetChiralTag()),
             })
@@ -265,12 +271,8 @@ class MolReader:
         """Get all improper angles as a list of dictionaries.
 
         An improper is defined by a central atom and three substituents.
-        In standard organic molecules, impropers are typically defined for
-        trigonal planar atoms (like carbonyl carbons or aromatic carbons)
-        to enforce planarity.
-
-        This method extracts impropers from ring systems and known
-        functional group patterns where improper dihedrals are meaningful.
+        For each atom with 3 or more neighbors, all combinations of 3
+        neighbors are generated as impropers.
 
         Returns:
             List of improper records, each with keys:
@@ -283,36 +285,36 @@ class MolReader:
         if self._mol is None:
             raise RuntimeError("Molecule not loaded")
 
+        from itertools import combinations
+
         impropers = []
         imp_idx = 1
         visited = set()
 
-        # Find atoms that could have impropers: sp2 carbons with 3 neighbors (carbonyl-like)
-        # or atoms in rings that need planarity constraints
+        # For each atom with 3 or more neighbors, generate all combinations of 3 neighbors
         for atom in self._mol.GetAtoms():
-            idx = atom.GetIdx()
-            symbol = atom.GetSymbol()
-            neighbors = atom.GetNeighbors()
-            if len(neighbors) != 3:
-                continue
-            # For now, create impropers for atoms with exactly 3 neighbors
-            # that are likely to need planarity constraints
-            neighbor_indices = sorted([n.GetIdx() for n in neighbors])
+            center_idx = atom.GetIdx()
+            neighbor_indices = sorted([n.GetIdx() for n in atom.GetNeighbors()])
 
-            # Create canonical key
-            key = (idx, neighbor_indices[0], neighbor_indices[1], neighbor_indices[2])
-            if key in visited:
+            if len(neighbor_indices) < 3:
                 continue
-            visited.add(key)
 
-            impropers.append({
-                "idx": imp_idx,
-                "a1": idx + 1,
-                "a2": neighbor_indices[0] + 1,
-                "a3": neighbor_indices[1] + 1,
-                "a4": neighbor_indices[2] + 1,
-            })
-            imp_idx += 1
+            # Generate all combinations of 3 neighbors
+            for a, b, c in combinations(neighbor_indices, 3):
+                # Create canonical key to avoid duplicates
+                key = (center_idx, a, b, c)
+                if key in visited:
+                    continue
+                visited.add(key)
+
+                impropers.append({
+                    "idx": imp_idx,
+                    "a1": center_idx + 1,
+                    "a2": a + 1,
+                    "a3": b + 1,
+                    "a4": c + 1,
+                })
+                imp_idx += 1
 
         return impropers
 

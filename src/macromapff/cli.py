@@ -28,7 +28,7 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
 
     Args:
         samplesDir: Directory containing sample subdirectories.
-        dbPath: Path to output the pickle database file.
+        dbPath: Path to output the SQLite database file.
         verbose: If True, print detailed progress.
 
     Returns:
@@ -96,6 +96,7 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
         for atom in atoms:
             atomIdx = atom["idx"]
             hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
+            hop2Env = molReader.computeHop2Env(atomIdx)
             atomHop0Key[atomIdx] = hop0Key
 
             # Get LAMMPS type from the sample data
@@ -120,21 +121,27 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
             )
 
             # Insert atom type at hop2 level
+            # lammps_type is auto-generated to ensure uniqueness per hop2Key
             db.insertAtomType(hop2Key, {
                 "element": atom["symbol"],
+                "hop1_key": hop1Key,
                 "hop0_key": hop0Key,
-                "lammps_type": lammpsType,
+                "hop2_env": hop2Env,
                 "mass": mass[1] if mass else 0.0,
                 "sigma": pairCoeff[2] if pairCoeff else 0.0,
                 "epsilon": pairCoeff[1] if pairCoeff else 0.0,
                 "source": [f"{segName}_{atomIdx}"],
             })
 
-            # Insert hop1 keymap
-            db.insertHop1Key(hop1Key, hop0Key, lammpsType)
+            # Get the auto-generated lammps_type from database
+            inserted_info = db.getAtomType(hop2Key)
+            assigned_lammps_type = inserted_info["lammps_type"]
 
-            # Insert hop0 keymap
-            db.insertHop0Key(hop0Key, lammpsType)
+            # Insert hop1 keymap (for external validation only)
+            db.insertHop1Key(hop1Key, assigned_lammps_type)
+
+            # Insert hop0 keymap (for external validation only)
+            db.insertHop0Key(hop0Key, assigned_lammps_type)
 
         # Process bonds
         # bond_records: [bond_id, bond_type, a1, a2]
@@ -261,8 +268,8 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
                      f"{len(angles)} angles, {len(dihedrals)} dihedrals, {len(impropers)} impropers")
 
     # Update metadata
-    db._data["meta"]["built_at"] = datetime.now().isoformat()
-    db._data["meta"]["sample_count"] = len(sampleDirs)
+    db.setMeta("built_at", datetime.now().isoformat())
+    db.setMeta("sample_count", str(len(sampleDirs)))
 
     # Save database
     db.save()
@@ -303,7 +310,7 @@ def parameterize(
 
     Args:
         molPath: Path to target molecule .mol or .pdb file.
-        dbPath: Path to the pickle database file.
+        dbPath: Path to the SQLite database file.
         outPath: Output LAMMPS file path. If None, uses <mol_file>_param.lmp.
         verbose: If True, print detailed progress.
 
@@ -319,6 +326,10 @@ def parameterize(
     log.info(f"  Atom types: {len(db.atomTypes)}")
     log.info(f"  Hop1 keymap: {len(db.hop1Keymap)}")
     log.info(f"  Hop0 keymap: {len(db.hop0Keymap)}")
+    log.info(f"  Bond params: {len(db.bondParams)}")
+    log.info(f"  Angle params: {len(db.angleParams)}")
+    log.info(f"  Dihedral params: {len(db.dihedralParams)}")
+    log.info(f"  Improper params: {len(db.improperParams)}")
 
     # Parse target molecule
     molReader = MolReader(molPath)
@@ -337,7 +348,7 @@ def parameterize(
     # Resolve atom types
     from macromapff.fallback import resolveAtomType
 
-    atomTypeMap: dict[int, int] = {}  # atomIdx -> lammpsType
+    atomTypeMap: dict[int, int] = {}  # atomIdx -> lammpsType (resolved from db)
     atomHop0Key: dict[int, str] = {}  # atomIdx -> hop0Key (resolved from db)
     atomHop2Key: dict[int, str] = {}  # atomIdx -> hop2Key (for typeInfo lookup)
     hop2Matches = 0
@@ -354,10 +365,12 @@ def parameterize(
         lammpsType, resolvedHop0Key = resolveAtomType(
             hop2Key, hop1Key, hop0Key, atom["symbol"], db
         )
-        # Use hop2Key as unique identifier for type assignment
-        # This ensures atoms with same lammps_type but different elements (different hop2Keys) get different types
-        atomTypeMap[atomIdx] = hop2Key
+        # Use lammpsType as the type identifier
+        atomTypeMap[atomIdx] = lammpsType
         atomHop0Key[atomIdx] = resolvedHop0Key
+
+        # Log atom type assignment
+        log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType}")
 
         # Track match statistics
         if hop2Key in db.atomTypes:
@@ -374,6 +387,8 @@ def parameterize(
     bondTypeMap: dict[int, int] = {}   # bondIdx -> newBondTypeId
     bondTypeParams: dict[int, tuple] = {}  # newBondTypeId -> (k, r0)
     nextBondTypeId = 1
+    bondNoMatch = 0
+    bondNoMatchAtoms: list[tuple[int, int]] = []
 
     for bond in bonds:
         bondIdx = bond["idx"]
@@ -382,12 +397,15 @@ def parameterize(
         hop0KeyA = atomHop0Key.get(a1)
         hop0KeyB = atomHop0Key.get(a2)
         if hop0KeyA is None or hop0KeyB is None:
+            bondNoMatch += 1
+            bondNoMatchAtoms.append((a1, a2))
             continue
 
         # Look up bond param
         bondParam = db.lookupBondParam(hop0KeyA, hop0KeyB)
         if bondParam is None:
-            log.warning(f"  No bond param for atoms {a1}-{a2}")
+            bondNoMatch += 1
+            bondNoMatchAtoms.append((a1, a2))
             continue
 
         # Create bond type if not seen
@@ -406,15 +424,14 @@ def parameterize(
         bondParamMap[bondIdx] = bondParam
         bondTypeMap[bondIdx] = bondTypeId
 
-    log.info(f"Bond parameters: {len(bondTypeParams)} unique types, {len(bondParamMap)} bonds")
-
     # Look up angle parameters
     angles = molReader.getAngles()
     angleParamMap: dict[int, dict] = {}
     angleTypeMap: dict[int, int] = {}
     angleTypeParams: dict[int, tuple] = {}
     nextAngleTypeId = 1
-    angleWarnings = 0
+    angleNoMatch = 0
+    angleNoMatchAtoms: list[tuple[int, int, int]] = []
 
     for angle in angles:
         angleIdx = angle["idx"]
@@ -425,12 +442,15 @@ def parameterize(
         hop0KeyB = atomHop0Key.get(a2)
         hop0KeyC = atomHop0Key.get(a3)
         if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None:
+            angleNoMatch += 1
+            angleNoMatchAtoms.append((a1, a2, a3))
             continue
 
         # Look up angle param
         angleParam = db.lookupAngleParam(hop0KeyA, hop0KeyB, hop0KeyC)
         if angleParam is None:
-            angleWarnings += 1
+            angleNoMatch += 1
+            angleNoMatchAtoms.append((a1, a2, a3))
             continue
 
         # Create angle type if not seen
@@ -449,16 +469,14 @@ def parameterize(
         angleParamMap[angleIdx] = angleParam
         angleTypeMap[angleIdx] = angleTypeId
 
-    if angleWarnings > 0:
-        log.warning(f"  No angle param for {angleWarnings} angles")
-
     # Look up dihedral parameters
     dihedrals = molReader.getDihedrals()
     dihedralParamMap: dict[int, dict] = {}
     dihedralTypeMap: dict[int, int] = {}
     dihedralTypeParams: dict[int, tuple] = {}
     nextDihedralTypeId = 1
-    dihedralWarnings = 0
+    dihedralNoMatch = 0
+    dihedralNoMatchAtoms: list[tuple[int, int, int, int]] = []
 
     for dihedral in dihedrals:
         dihIdx = dihedral["idx"]
@@ -471,12 +489,15 @@ def parameterize(
         hop0KeyC = atomHop0Key.get(a3)
         hop0KeyD = atomHop0Key.get(a4)
         if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None or hop0KeyD is None:
+            dihedralNoMatch += 1
+            dihedralNoMatchAtoms.append((a1, a2, a3, a4))
             continue
 
         # Look up dihedral param
         dihedralParam = db.lookupDihedralParam(hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
         if dihedralParam is None:
-            dihedralWarnings += 1
+            dihedralNoMatch += 1
+            dihedralNoMatchAtoms.append((a1, a2, a3, a4))
             continue
 
         # Create dihedral type if not seen
@@ -497,16 +518,14 @@ def parameterize(
         dihedralParamMap[dihIdx] = dihedralParam
         dihedralTypeMap[dihIdx] = dihedralTypeId
 
-    if dihedralWarnings > 0:
-        log.warning(f"  No dihedral param for {dihedralWarnings} dihedrals")
-
     # Look up improper parameters
     impropers = molReader.getImpropers()
     improperParamMap: dict[int, dict] = {}
     improperTypeMap: dict[int, int] = {}
     improperTypeParams: dict[int, tuple] = {}
     nextImproperTypeId = 1
-    improperWarnings = 0
+    improperNoMatch = 0
+    improperNoMatchAtoms: list[tuple[int, int, int, int]] = []
 
     for improper in impropers:
         impIdx = improper["idx"]
@@ -519,12 +538,15 @@ def parameterize(
         hop0KeyC = atomHop0Key.get(a3)
         hop0KeyD = atomHop0Key.get(a4)
         if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None or hop0KeyD is None:
+            improperNoMatch += 1
+            improperNoMatchAtoms.append((a1, a2, a3, a4))
             continue
 
         # Look up improper param
         improperParam = db.lookupImproperParam(hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
         if improperParam is None:
-            improperWarnings += 1
+            improperNoMatch += 1
+            improperNoMatchAtoms.append((a1, a2, a3, a4))
             continue
 
         # Create improper type if not seen
@@ -545,25 +567,36 @@ def parameterize(
         improperParamMap[impIdx] = improperParam
         improperTypeMap[impIdx] = improperTypeId
 
-    if improperWarnings > 0:
-        log.warning(f"  No improper param for {improperWarnings} impropers")
+    # Write all warnings first
+    if bondNoMatch > 0:
+        for a1, a2 in bondNoMatchAtoms:
+            log.warning(f"  No bond param for atoms {a1}-{a2}")
+    if angleNoMatch > 0:
+        for a1, a2, a3 in angleNoMatchAtoms:
+            log.warning(f"  No angle param for atoms {a1}-{a2}-{a3}")
+    if dihedralNoMatch > 0:
+        for a1, a2, a3, a4 in dihedralNoMatchAtoms:
+            log.warning(f"  No dihedral param for atoms {a1}-{a2}-{a3}-{a4}")
+    if improperNoMatch > 0:
+        for a1, a2, a3, a4 in improperNoMatchAtoms:
+            log.warning(f"  No improper param for atoms {a1}-{a2}-{a3}-{a4}")
 
-    log.info(f"Angle parameters: {len(angleTypeParams)} unique types, {len(angleParamMap)} angles")
-    log.info(f"Dihedral parameters: {len(dihedralTypeParams)} unique types, {len(dihedralParamMap)} dihedrals")
-    log.info(f"Improper parameters: {len(improperTypeParams)} unique types, {len(improperParamMap)} impropers")
+    # Renumber LAMMPS types to be consecutive starting from 1
+    # This is REQUIRED for LAMMPS - type IDs must be consecutive
+    uniqueTypes = sorted(set(atomTypeMap.values()))
+    typeMapping = {old: new for new, old in enumerate(uniqueTypes, 1)}
 
-    log.info(f"Atom type assignment:")
+    # Write all parameter info lines
+    log.info(f"Bond parameters: {len(bondParamMap)} bonds, {len(bondTypeParams)} unique types, {bondNoMatch} no match")
+    log.info(f"Angle parameters: {len(angleParamMap)} angles, {len(angleTypeParams)} unique types, {angleNoMatch} no match")
+    log.info(f"Dihedral parameters: {len(dihedralParamMap)} dihedrals, {len(dihedralTypeParams)} unique types, {dihedralNoMatch} no match")
+    log.info(f"Improper parameters: {len(improperParamMap)} impropers, {len(improperTypeParams)} unique types, {improperNoMatch} no match")
+
+    log.info(f"Atom type assignment: {len(atoms)} atoms, {len(uniqueTypes)} unique types, {noMatch} no match")
     log.info(f"  hop2 exact matches: {hop2Matches}")
     log.info(f"  hop1 fallback: {hop1Matches}")
     log.info(f"  hop0 fallback: {hop0Matches}")
     log.info(f"  no match: {noMatch}")
-
-    # Renumber LAMMPS types to be consecutive starting from 1
-    uniqueTypes = sorted(set(atomTypeMap.values()))
-    typeMapping = {old: new for new, old in enumerate(uniqueTypes, 1)}
-    newAtomTypes = {atomIdx: typeMapping[oldType] for atomIdx, oldType in atomTypeMap.items()}
-
-    log.info(f"Unique LAMMPS types after renumbering: {len(uniqueTypes)}")
 
     # Build output data
     # Get box dimensions from coordinates
@@ -575,30 +608,40 @@ def parameterize(
     ylo, yhi = min(yvals) - 5, max(yvals) + 5
     zlo, zhi = min(zvals) - 5, max(zvals) + 5
 
-    # Build atom type info: type_id -> {element, mass, sigma, epsilon}
+    # Build atom type info: output_type -> {element, mass, sigma, epsilon, lammps_type}
+    # lammps_type is stored so we can trace back which db entry this came from
     typeInfo: dict[int, dict] = {}
     for atom in atoms:
         atomIdx = atom["idx"]
-        newType = newAtomTypes[atomIdx]
-        if newType not in typeInfo:
-            # Use hop2Key directly to look up the correct database entry
-            hop2Key = atomHop2Key.get(atomIdx)
-            if hop2Key and hop2Key in db.atomTypes:
-                info = db.atomTypes[hop2Key]
-                typeInfo[newType] = {
+        lammpsType = atomTypeMap[atomIdx]
+        outputType = typeMapping[lammpsType]
+        if outputType not in typeInfo:
+            element = atom["symbol"]
+
+            # Try to find matching atom type info by element + lammps_type
+            info = None
+            for key, entry in db.atomTypes.items():
+                if entry["element"] == element and entry["lammps_type"] == lammpsType:
+                    info = entry
+                    break
+
+            if info is not None:
+                typeInfo[outputType] = {
                     "element": info["element"],
                     "mass": info["mass"],
                     "sigma": info["sigma"],
                     "epsilon": info["epsilon"],
+                    "lammps_type": lammpsType,  # Track original for debugging
                 }
             else:
                 # No match found - set all parameters to 0 and report error
-                log.error(f"  Atom {atomIdx} ({atom['symbol']}): no database match, setting all params to 0")
-                typeInfo[newType] = {
-                    "element": atom["symbol"],
+                log.error(f"  Atom {atomIdx} ({element}): no database match, setting all params to 0")
+                typeInfo[outputType] = {
+                    "element": element,
                     "mass": 0.0,
                     "sigma": 0.0,
                     "epsilon": 0.0,
+                    "lammps_type": lammpsType,
                 }
 
     # Build LammpsData object
@@ -656,9 +699,10 @@ def parameterize(
     # Atom records
     for atom in atoms:
         atomIdx = atom["idx"]
-        newType = newAtomTypes[atomIdx]
+        lammpsType = atomTypeMap[atomIdx]
+        outputType = typeMapping[lammpsType]
         x, y, z = coords[atomIdx]
-        lmpData.atom_records.append((atomIdx, 1, newType, 0.0, x, y, z))
+        lmpData.atom_records.append((atomIdx, 1, outputType, 0.0, x, y, z))
 
     # Bond records
     for bond in bonds:
