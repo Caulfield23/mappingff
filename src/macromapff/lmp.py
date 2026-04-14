@@ -397,3 +397,32 @@ def generateLammps(data: LammpsData, outPath: Path) -> None:
     lines.append("")
 
     outPath.write_text("\n".join(lines) + "\n")
+
+
+def adjustTotalCharge(data: LammpsData, targetCharge: float) -> None:
+    """Adjust atom charges in LammpsData to achieve target total charge.
+
+    Distributes charge delta evenly across all non-hydrogen atoms.
+
+    Args:
+        data: LammpsData object to modify in-place.
+        targetCharge: Desired total charge for the system.
+    """
+    # Calculate current total charge
+    current_charge = sum(atom[3] for atom in data.atom_records)
+
+    # Get all non-hydrogen atom indices (type_id != 1 is non-H)
+    non_h_indices = [i for i, atom in enumerate(data.atom_records) if atom[2] != 1]
+
+    if not non_h_indices:
+        return
+
+    # Calculate adjustment per atom
+    delta = targetCharge - current_charge
+    adjustment = delta / len(non_h_indices)
+
+    # Modify charges for non-hydrogen atoms
+    for i in non_h_indices:
+        atom = list(data.atom_records[i])
+        atom[3] += adjustment
+        data.atom_records[i] = tuple(atom)

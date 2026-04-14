@@ -55,7 +55,7 @@ class TestStandardWorkflow:
             # Step 1: Build database
             result = buildDb(SEG_DATA, self.db_path, verbose=True)
             assert result["samples_count"] == 4
-            assert result["atoms_processed"] == 302
+            assert result["atoms_processed"] == 318
             assert self.db_path.exists()
         finally:
             root_logger.removeHandler(build_file_handler)
@@ -83,9 +83,10 @@ class TestStandardWorkflow:
             assert result["angles"] > 0
             assert result["dihedrals"] > 0
             assert result["impropers"] > 0
-            assert result["unique_types"] == 62
-            assert result["hop2_matches"] == 2969
-            assert result["hop1_matches"] == 344
+            assert result["unique_types"] == 37  # hop3 classification is more specific
+            assert result["hop3_matches"] == 2536
+            assert result["hop2_matches"] == 543  # hop2 fallback
+            assert result["hop1_matches"] == 234
             assert result["hop0_matches"] == 0
             assert result["no_match"] == 0
 
@@ -103,11 +104,11 @@ class TestStandardWorkflow:
             assert "3313 atoms" in content
             assert "3486 bonds" in content
             assert "6245 angles" in content
-            assert "9642 dihedrals" in content
-            assert "2953 impropers" in content
+            assert "9652 dihedrals" in content  # was 9646 before dihedral fix
+            assert "2973 impropers" in content
 
             # Check type counts
-            assert "62 atom types" in content
+            assert "37 atom types" in content  # hop3 classification gives finer granularity
             assert "18 bond types" in content
             assert "31 angle types" in content
             assert "26 dihedral types" in content

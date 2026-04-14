@@ -23,320 +23,531 @@ if TYPE_CHECKING:
     from rdkit.Chem import rdchem
 
 
-def encodeAtomEnvHop0(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
-    """Compute hop0 level environment for an atom.
+# ── Bond Type Helper ────────────────────────────────────────────────────────────
 
-    Hop0 is the coarsest environment descriptor. It captures:
-        - Center atom properties (z, charge, degree, hybridization, ring membership)
-        - Neighbor signatures: "atomicNum:bondType:formalCharge" for each neighbor
-        - Bond kind list: sorted list of S/D/T/A/U codes for each bond
 
-    This level is used for bonded parameter matching (bond/angle/dihedral/improper)
-    because it captures the immediate chemical environment without 2nd-order details.
+def _bondTypeCode(bond: rdchem.Bond) -> str:
+    """Get single-character bond type code.
 
-    Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object (1-based index in calling code).
-
-    Returns:
-        Dictionary with keys:
-            - z: atomic number
-            - formal_charge: formal charge
-            - degree: total degree
-            - hybridization: hybridization as string
-            - in_ring: 0 or 1
-            - ring_count: number of rings atom participates in
-            - total_hs: number of implicit hydrogens
-            - neighbor_sig: sorted list of "z:bondType:charge" strings
-            - bond_kinds: sorted list of S/D/T/A/U codes
+    Codes: S=SINGLE, D=DOUBLE, T=TRIPLE, A=AROMATIC, U=UNKNOWN
     """
-    ring_info = mol.GetRingInfo()
-    atom_idx = atom.GetIdx()
-    ring_count = ring_info.NumAtomRings(atom_idx)
+    from rdkit import Chem
+    bt = bond.GetBondType()
+    if bt == Chem.rdchem.BondType.SINGLE:
+        return "S"
+    elif bt == Chem.rdchem.BondType.DOUBLE:
+        return "D"
+    elif bt == Chem.rdchem.BondType.TRIPLE:
+        return "T"
+    elif bt == Chem.rdchem.BondType.AROMATIC:
+        return "A"
+    else:
+        return "U"
 
+
+# ── Graph-Based Subgraph Extraction ────────────────────────────────────────────
+
+
+def _atomProps(atom: rdchem.Atom) -> dict:
+    """Get canonical properties dict for an atom."""
     return {
         "z": atom.GetAtomicNum(),
-        "formal_charge": atom.GetFormalCharge(),
-        "aromatic": int(atom.GetIsAromatic()),
-        "degree": atom.GetDegree(),
-        "hybridization": str(atom.GetHybridization()),
-        "in_ring": int(atom.IsInRing()),
-        "ring_count": ring_count,
-        "total_hs": atom.GetTotalNumHs(includeNeighbors=True),
-        "neighbor_sig": _neighborSignature(mol, atom),
-        "bond_kinds": _bondKindList(mol, atom),
+        "fc": atom.GetFormalCharge(),
+        "ar": int(atom.GetIsAromatic()),
+        "deg": atom.GetTotalDegree(),
+        "h": atom.GetTotalNumHs(includeNeighbors=True),
+        "ring": int(atom.IsInRing()),
     }
 
 
-def encodeAtomEnvHop1(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
-    """Compute hop1 level environment for an atom.
+def getHop1Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    """Extract hop1 subgraph centered on an atom.
 
-    Hop1 extends hop0 by adding the hop1_shell, which contains detailed
-    properties of first neighbors (their element, aromaticity, degree, etc.).
-
-    This level is used for the first fallback step in atom typing when
-    no exact hop2 match is found.
-
-    Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object.
-
-    Returns:
-        Dictionary with all hop0 keys plus:
-            - hop1_shell: list of neighbor descriptors, each with z, ar, deg, fc, h, ring, bt
-    """
-    env = encodeAtomEnvHop0(mol, atom)
-    env["hop1_shell"] = _shellNeighbors(mol, atom, depth=1)
-    return env
-
-
-def encodeAtomEnvHop2(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
-    """Compute hop2 level environment for an atom.
-
-    Hop2 extends hop1 by adding the hop2_shell, which contains detailed
-    properties of second neighbors (neighbors of neighbors, excluding the
-    center and hop1 atoms).
-
-    This is the finest-grained environment descriptor and provides the
-    most specific atom type identification when an exact match exists.
+    The subgraph includes:
+    - center: center atom properties
+    - hop1: {idx: {z, fc, ar, deg, h, ring, bt_to_center}}
+    - bonds: [(center_idx, hop1_idx, bt), ...] including hop1-hop1 bonds
 
     Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object.
+        mol: RDKit molecule.
+        atom: Center atom (RDKit 0-based index).
 
     Returns:
-        Dictionary with all hop1 keys plus:
-            - hop2_shell: list of 2nd-order neighbor descriptors
+        dict with center, hop1 dict, and bonds list.
     """
-    env = encodeAtomEnvHop1(mol, atom)
-    env["hop2_shell"] = _shellNeighbors(mol, atom, depth=2)
-    return env
+    center_idx = atom.GetIdx()
+    ring_info = mol.GetRingInfo()
+
+    # Center properties
+    center_props = _atomProps(atom)
+    center_props["ring_count"] = ring_info.NumAtomRings(center_idx)
+
+    # Hop1 atoms: neighbors of center
+    hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
+    hop1 = {}
+    for n in atom.GetNeighbors():
+        idx = n.GetIdx()
+        props = _atomProps(n)
+        props["ring_count"] = ring_info.NumAtomRings(idx)
+        # Bond type from hop1 to center
+        bond = mol.GetBondBetweenAtoms(center_idx, idx)
+        props["bt_to_center"] = _bondTypeCode(bond)
+        hop1[idx] = props
+
+    # Bonds: center-hop1 and hop1-hop1
+    bonds = []
+    for hop1_idx in hop1_idx_set:
+        bonds.append((center_idx, hop1_idx, hop1[hop1_idx]["bt_to_center"]))
+        for n2 in mol.GetAtomWithIdx(hop1_idx).GetNeighbors():
+            idx2 = n2.GetIdx()
+            if idx2 in hop1_idx_set and idx2 > hop1_idx:
+                bond = mol.GetBondBetweenAtoms(hop1_idx, idx2)
+                bonds.append((hop1_idx, idx2, _bondTypeCode(bond)))
+
+    return {
+        "center": center_props,
+        "hop1": hop1,
+        "bonds": bonds,
+    }
 
 
-def computeHopKeys(envHop2: dict) -> tuple[str, str, str]:
-    """Compute hop2, hop1, and hop0 keys from a hop2 environment dict.
+def getHop2Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    """Extract hop2 subgraph centered on an atom.
 
-    Derives hop1 key by stripping hop2_shell from hop2 env.
-    Derives hop0 key by stripping hop1_shell from hop1 env.
-    Each key is a SHA-256 encoding of the respective environment dict.
+    The subgraph includes:
+    - center: center atom properties
+    - hop1: {idx: {z, fc, ar, deg, h, ring, bt_to_center}}
+    - hop2: {idx: {z, fc, ar, deg, h, ring, bt_to_parent, parent_idx}}
+    - bonds: all bonds within hop2 scope (center-hop1, hop1-hop2, hop2-hop2, hop1-hop1)
 
     Args:
-        envHop2: Full hop2 environment dictionary.
+        mol: RDKit molecule.
+        atom: Center atom (RDKit 0-based index).
 
     Returns:
-        Tuple of (hop2Key, hop1Key, hop0Key), all 64-character hex strings.
+        dict with center, hop1 dict, hop2 dict, and bonds list.
     """
-    hop1Env = _stripHop2(envHop2)
-    hop0Env = _stripHop1(hop1Env)
+    center_idx = atom.GetIdx()
+    ring_info = mol.GetRingInfo()
 
-    hop2Key = encodeEnvKey(envHop2)
-    hop1Key = encodeEnvKey(hop1Env)
-    hop0Key = encodeEnvKey(hop0Env)
+    # Center properties
+    center_props = _atomProps(atom)
+    center_props["ring_count"] = ring_info.NumAtomRings(center_idx)
 
-    return hop2Key, hop1Key, hop0Key
+    # Hop1 atoms: neighbors of center
+    hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
+    hop1 = {}
+    for n in atom.GetNeighbors():
+        idx = n.GetIdx()
+        props = _atomProps(n)
+        props["ring_count"] = ring_info.NumAtomRings(idx)
+        bond = mol.GetBondBetweenAtoms(center_idx, idx)
+        props["bt_to_center"] = _bondTypeCode(bond)
+        hop1[idx] = props
+
+    # Hop2 atoms: neighbors of hop1, excluding center and hop1
+    hop2_idx_set = set()
+    hop2 = {}
+    for hop1_idx in hop1_idx_set:
+        hop1_atom = mol.GetAtomWithIdx(hop1_idx)
+        for n in hop1_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop1_idx_set or idx == center_idx:
+                continue
+            if idx not in hop2_idx_set:
+                hop2_idx_set.add(idx)
+                props = _atomProps(n)
+                props["ring_count"] = ring_info.NumAtomRings(idx)
+                # Bond to parent hop1
+                bond = mol.GetBondBetweenAtoms(hop1_idx, idx)
+                props["bt_to_parent"] = _bondTypeCode(bond)
+                props["parent_idx"] = hop1_idx
+                hop2[idx] = props
+
+    # All bonds within hop2 scope
+    all_atoms_in_scope = hop1_idx_set | hop2_idx_set | {center_idx}
+    bonds = []
+
+    # center-hop1 bonds
+    for hop1_idx in hop1_idx_set:
+        bonds.append((center_idx, hop1_idx, hop1[hop1_idx]["bt_to_center"]))
+
+    # hop1-hop1 bonds
+    for hop1_idx in hop1_idx_set:
+        for n2 in mol.GetAtomWithIdx(hop1_idx).GetNeighbors():
+            idx2 = n2.GetIdx()
+            if idx2 in hop1_idx_set and idx2 > hop1_idx:
+                bond = mol.GetBondBetweenAtoms(hop1_idx, idx2)
+                bonds.append((hop1_idx, idx2, _bondTypeCode(bond)))
+
+    # hop1-hop2 bonds
+    for hop2_idx in hop2_idx_set:
+        hop2_atom = mol.GetAtomWithIdx(hop2_idx)
+        for n in hop2_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop1_idx_set:
+                bond = mol.GetBondBetweenAtoms(hop2_idx, idx)
+                bonds.append((hop2_idx, idx, _bondTypeCode(bond)))
+
+    # hop2-hop2 bonds
+    for hop2_idx in hop2_idx_set:
+        hop2_atom = mol.GetAtomWithIdx(hop2_idx)
+        for n in hop2_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop2_idx_set and idx > hop2_idx:
+                bond = mol.GetBondBetweenAtoms(hop2_idx, idx)
+                bonds.append((hop2_idx, idx, _bondTypeCode(bond)))
+
+    return {
+        "center": center_props,
+        "hop1": hop1,
+        "hop2": hop2,
+        "bonds": bonds,
+    }
 
 
-# ── Helper Functions ────────────────────────────────────────────────────────────
+def getHop3Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    """Extract hop3 subgraph centered on an atom.
 
-
-def _neighborSignature(mol: rdchem.Mol, atom: rdchem.Atom) -> list[str]:
-    """Generate neighbor signature list for an atom.
-
-    Each neighbor contributes a signature string in the format:
-    "atomicNum:bondType:aromaticFlag"
-
-    The bond type uses single-character codes: S, D, T, A, U
-    to match the legacy format used in the reference implementation.
-
-    The aromaticFlag is 1 if the neighbor is aromatic, 0 otherwise.
-
-    The signatures are sorted to ensure canonical ordering regardless of
-    the order in which neighbors are enumerated by RDKit.
+    The subgraph includes:
+    - center: center atom properties
+    - hop1: {idx: {z, fc, ar, deg, h, ring, bt_to_center}}
+    - hop2: {idx: {z, fc, ar, deg, h, ring, bt_to_parent, parent_idx}}
+    - hop3: {idx: {z, fc, ar, deg, h, ring, bt_to_parent, parent_idx}}
+    - bonds: all bonds within hop3 scope (center-hop1, hop1-hop2, hop2-hop3, hop1-hop1, hop2-hop2, hop3-hop3)
 
     Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object (center atom).
+        mol: RDKit molecule.
+        atom: Center atom (RDKit 0-based index).
 
     Returns:
-        Sorted list of neighbor signature strings.
+        dict with center, hop1, hop2, hop3 dicts, and bonds list.
     """
-    from rdkit import Chem
-    sigs = []
-    for neighbor in atom.GetNeighbors():
-        bond = mol.GetBondBetweenAtoms(atom.GetIdx(), neighbor.GetIdx())
-        bt = bond.GetBondType()
-        if bt == Chem.rdchem.BondType.SINGLE:
-            bond_code = "S"
-        elif bt == Chem.rdchem.BondType.DOUBLE:
-            bond_code = "D"
-        elif bt == Chem.rdchem.BondType.TRIPLE:
-            bond_code = "T"
-        elif bt == Chem.rdchem.BondType.AROMATIC:
-            bond_code = "A"
-        else:
-            bond_code = "U"
-        sig = f"{neighbor.GetAtomicNum()}:{bond_code}:{int(neighbor.GetIsAromatic())}"
-        sigs.append(sig)
-    sigs.sort()
-    return sigs
+    center_idx = atom.GetIdx()
+    ring_info = mol.GetRingInfo()
+
+    # Center properties
+    center_props = _atomProps(atom)
+    center_props["ring_count"] = ring_info.NumAtomRings(center_idx)
+
+    # Hop1 atoms: neighbors of center
+    hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
+    hop1 = {}
+    for n in atom.GetNeighbors():
+        idx = n.GetIdx()
+        props = _atomProps(n)
+        props["ring_count"] = ring_info.NumAtomRings(idx)
+        bond = mol.GetBondBetweenAtoms(center_idx, idx)
+        props["bt_to_center"] = _bondTypeCode(bond)
+        hop1[idx] = props
+
+    # Hop2 atoms: neighbors of hop1, excluding center and hop1
+    hop2_idx_set = set()
+    hop2 = {}
+    for hop1_idx in hop1_idx_set:
+        hop1_atom = mol.GetAtomWithIdx(hop1_idx)
+        for n in hop1_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop1_idx_set or idx == center_idx:
+                continue
+            if idx not in hop2_idx_set:
+                hop2_idx_set.add(idx)
+                props = _atomProps(n)
+                props["ring_count"] = ring_info.NumAtomRings(idx)
+                bond = mol.GetBondBetweenAtoms(hop1_idx, idx)
+                props["bt_to_parent"] = _bondTypeCode(bond)
+                props["parent_idx"] = hop1_idx
+                hop2[idx] = props
+
+    # Hop3 atoms: neighbors of hop2, excluding center, hop1, hop2
+    hop3_idx_set = set()
+    hop3 = {}
+    for hop2_idx in hop2_idx_set:
+        hop2_atom = mol.GetAtomWithIdx(hop2_idx)
+        for n in hop2_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop1_idx_set or idx in hop2_idx_set or idx == center_idx:
+                continue
+            if idx not in hop3_idx_set:
+                hop3_idx_set.add(idx)
+                props = _atomProps(n)
+                props["ring_count"] = ring_info.NumAtomRings(idx)
+                bond = mol.GetBondBetweenAtoms(hop2_idx, idx)
+                props["bt_to_parent"] = _bondTypeCode(bond)
+                props["parent_idx"] = hop2_idx
+                hop3[idx] = props
+
+    # All bonds within hop3 scope
+    bonds = []
+
+    # center-hop1 bonds
+    for hop1_idx in hop1_idx_set:
+        bonds.append((center_idx, hop1_idx, hop1[hop1_idx]["bt_to_center"]))
+
+    # hop1-hop1 bonds
+    for hop1_idx in hop1_idx_set:
+        for n2 in mol.GetAtomWithIdx(hop1_idx).GetNeighbors():
+            idx2 = n2.GetIdx()
+            if idx2 in hop1_idx_set and idx2 > hop1_idx:
+                bond = mol.GetBondBetweenAtoms(hop1_idx, idx2)
+                bonds.append((hop1_idx, idx2, _bondTypeCode(bond)))
+
+    # hop1-hop2 bonds
+    for hop2_idx in hop2_idx_set:
+        hop2_atom = mol.GetAtomWithIdx(hop2_idx)
+        for n in hop2_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop1_idx_set:
+                bond = mol.GetBondBetweenAtoms(hop2_idx, idx)
+                bonds.append((hop2_idx, idx, _bondTypeCode(bond)))
+
+    # hop2-hop2 bonds
+    for hop2_idx in hop2_idx_set:
+        hop2_atom = mol.GetAtomWithIdx(hop2_idx)
+        for n in hop2_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop2_idx_set and idx > hop2_idx:
+                bond = mol.GetBondBetweenAtoms(hop2_idx, idx)
+                bonds.append((hop2_idx, idx, _bondTypeCode(bond)))
+
+    # hop2-hop3 bonds
+    for hop3_idx in hop3_idx_set:
+        hop3_atom = mol.GetAtomWithIdx(hop3_idx)
+        for n in hop3_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop2_idx_set:
+                bond = mol.GetBondBetweenAtoms(hop3_idx, idx)
+                bonds.append((hop3_idx, idx, _bondTypeCode(bond)))
+
+    # hop3-hop3 bonds
+    for hop3_idx in hop3_idx_set:
+        hop3_atom = mol.GetAtomWithIdx(hop3_idx)
+        for n in hop3_atom.GetNeighbors():
+            idx = n.GetIdx()
+            if idx in hop3_idx_set and idx > hop3_idx:
+                bond = mol.GetBondBetweenAtoms(hop3_idx, idx)
+                bonds.append((hop3_idx, idx, _bondTypeCode(bond)))
+
+    return {
+        "center": center_props,
+        "hop1": hop1,
+        "hop2": hop2,
+        "hop3": hop3,
+        "bonds": bonds,
+    }
 
 
-def _bondKindList(mol: rdchem.Mol, atom: rdchem.Atom) -> list[str]:
-    """Get sorted list of bond kind codes for an atom.
+# ── Graph Hashing ────────────────────────────────────────────────────────────────
 
-    Each connected bond contributes a single character code:
-        - S: SINGLE
-        - D: DOUBLE
-        - T: TRIPLE
-        - A: AROMATIC
-        - U: UNKNOWN
 
-    The list is sorted to ensure canonical ordering.
+def _canonicalizeSubgraph(subgraph: dict, center_idx: int, include_hop3: bool = False) -> dict:
+    """Canonicalize a subgraph for hashing.
+
+    Assigns canonical 0-based indices to atoms based on sorted properties.
 
     Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object.
+        subgraph: Graph dict with center, hop1/hop2 (and optionally hop3).
+        center_idx: Original RDKit index of the center atom.
+        include_hop3: If True, also canonicalize hop3 atoms.
 
     Returns:
-        Sorted list of bond kind codes (S, D, T, A, U).
+        Canonicalized subgraph with remapped indices.
     """
-    from rdkit import Chem
-    kinds = []
-    for neighbor in atom.GetNeighbors():
-        bond = mol.GetBondBetweenAtoms(atom.GetIdx(), neighbor.GetIdx())
-        bt = bond.GetBondType()
-        if bt == Chem.rdchem.BondType.SINGLE:
-            kinds.append("S")
-        elif bt == Chem.rdchem.BondType.DOUBLE:
-            kinds.append("D")
-        elif bt == Chem.rdchem.BondType.TRIPLE:
-            kinds.append("T")
-        elif bt == Chem.rdchem.BondType.AROMATIC:
-            kinds.append("A")
-        else:
-            kinds.append("U")
-    kinds.sort()
-    return kinds
+    canonical_atoms = []
 
+    # Center is always index 0
+    canonical_atoms.append((0, center_idx, subgraph["center"]))
 
-def _shellNeighbors(mol: rdchem.Mol, atom: rdchem.Atom, depth: int) -> list[dict]:
-    """Get neighboring atoms at specified shell depth.
+    # Collect hop1 atoms with their original indices
+    hop1_items = list(subgraph["hop1"].items())
 
-    For depth=1 (hop1): Returns all first neighbors of the center atom.
-    For depth=2 (hop2): Returns neighbors of first neighbors, excluding
-                        the center and hop1 atoms.
+    # Sort hop1 atoms by their properties for canonical ordering
+    def hop1_sort_key(item):
+        orig_idx, props = item
+        return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_center"])
 
-    Each neighbor is described by a dictionary with:
-        z, ar (aromatic), deg (degree), fc (formal charge),
-        h (total Hs), ring, bt (bond type)
+    hop1_items.sort(key=hop1_sort_key)
 
-    The result is sorted by (z, bt, ar, deg) for canonical ordering.
+    hop1_remap = {}  # original_idx -> canonical_idx
+    for canon_idx, (orig_idx, props) in enumerate(hop1_items, start=1):
+        hop1_remap[orig_idx] = canon_idx
+        canonical_atoms.append((canon_idx, orig_idx, props))
 
-    Args:
-        mol: RDKit molecule object.
-        atom: RDKit atom object (center atom).
-        depth: Shell depth (1 or 2).
+    # Collect hop2 atoms if present
+    hop2_items = list(subgraph.get("hop2", {}).items())
 
-    Returns:
-        Sorted list of neighbor descriptor dictionaries.
+    def hop2_sort_key(item):
+        orig_idx, props = item
+        return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_parent"], props["parent_idx"])
 
-    Raises:
-        ValueError: If depth is not 1 or 2.
-    """
-    if depth == 1:
-        shell = []
-        for neighbor in atom.GetNeighbors():
-            entry = {
-                "z": neighbor.GetAtomicNum(),
-                "fc": neighbor.GetFormalCharge(),
-                "ar": int(neighbor.GetIsAromatic()),
-                "deg": neighbor.GetTotalDegree(),
-                "h": neighbor.GetTotalNumHs(includeNeighbors=True),
-                "ring": int(neighbor.IsInRing()),
-            }
-            shell.append(entry)
-        shell.sort(key=lambda x: (x["z"], x["fc"], x["ar"], x["deg"], x["h"], x["ring"]))
-        return shell
+    hop2_items.sort(key=hop2_sort_key)
 
-    elif depth == 2:
-        # Collect hop1 atom indices for exclusion
-        hop1_neighbors = {n.GetIdx() for n in atom.GetNeighbors()}
-        shell = []
-        for hop1_neighbor in atom.GetNeighbors():
-            for hop2_neighbor in hop1_neighbor.GetNeighbors():
-                # Skip back to center or other hop1 atoms
-                if hop2_neighbor.GetIdx() in hop1_neighbors:
-                    continue
-                if hop2_neighbor.GetIdx() == atom.GetIdx():
-                    continue
-                entry = {
-                    "z": hop2_neighbor.GetAtomicNum(),
-                    "fc": hop2_neighbor.GetFormalCharge(),
-                    "ar": int(hop2_neighbor.GetIsAromatic()),
-                    "deg": hop2_neighbor.GetTotalDegree(),
-                    "h": hop2_neighbor.GetTotalNumHs(includeNeighbors=True),
-                    "ring": int(hop2_neighbor.IsInRing()),
-                }
-                shell.append(entry)
-        shell.sort(key=lambda x: (x["z"], x["fc"], x["ar"], x["deg"], x["h"], x["ring"]))
-        return shell
+    hop2_remap = {}  # original_idx -> canonical_idx
+    for canon_idx, (orig_idx, props) in enumerate(hop2_items, start=len(hop1_items) + 1):
+        hop2_remap[orig_idx] = canon_idx
+        canonical_atoms.append((canon_idx, orig_idx, props))
 
+    # Collect hop3 atoms if present and include_hop3 is True
+    if include_hop3:
+        hop3_items = list(subgraph.get("hop3", {}).items())
+
+        def hop3_sort_key(item):
+            orig_idx, props = item
+            return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_parent"], props["parent_idx"])
+
+        hop3_items.sort(key=hop3_sort_key)
+
+        hop3_remap = {}  # original_idx -> canonical_idx
+        for canon_idx, (orig_idx, props) in enumerate(hop3_items, start=len(hop1_items) + len(hop2_items) + 1):
+            hop3_remap[orig_idx] = canon_idx
+            canonical_atoms.append((canon_idx, orig_idx, props))
     else:
-        raise ValueError(f"Unsupported depth: {depth}")
+        hop3_items = []
+        hop3_remap = {}
+
+    # Build canonical representation
+    canon_hop1 = {}
+    for orig_idx, props in hop1_items:
+        canon_idx = hop1_remap[orig_idx]
+        canon_hop1[canon_idx] = {k: v for k, v in props.items() if k != "bt_to_center"}
+        canon_hop1[canon_idx]["bt_to_center"] = props["bt_to_center"]
+
+    canon_hop2 = {}
+    for orig_idx, props in hop2_items:
+        canon_idx = hop2_remap[orig_idx]
+        canon_hop2[canon_idx] = {
+            k: v for k, v in props.items()
+            if k not in ("bt_to_parent", "parent_idx")
+        }
+        canon_hop2[canon_idx]["bt_to_parent"] = props["bt_to_parent"]
+        canon_hop2[canon_idx]["parent_idx"] = hop1_remap[props["parent_idx"]]
+
+    canon_hop3 = {}
+    if include_hop3:
+        for orig_idx, props in hop3_items:
+            canon_idx = hop3_remap[orig_idx]
+            canon_hop3[canon_idx] = {
+                k: v for k, v in props.items()
+                if k not in ("bt_to_parent", "parent_idx")
+            }
+            canon_hop3[canon_idx]["bt_to_parent"] = props["bt_to_parent"]
+            canon_hop3[canon_idx]["parent_idx"] = hop2_remap[props["parent_idx"]]
+
+    # Remap bonds to canonical indices
+    canon_bonds = []
+    for idx1, idx2, bt in subgraph["bonds"]:
+        if idx1 == center_idx:
+            c1 = 0
+        elif idx1 in hop1_remap:
+            c1 = hop1_remap[idx1]
+        elif idx1 in hop2_remap:
+            c1 = hop2_remap[idx1]
+        else:
+            c1 = hop3_remap[idx1]
+
+        if idx2 == center_idx:
+            c2 = 0
+        elif idx2 in hop1_remap:
+            c2 = hop1_remap[idx2]
+        elif idx2 in hop2_remap:
+            c2 = hop2_remap[idx2]
+        else:
+            c2 = hop3_remap[idx2]
+
+        if c1 > c2:
+            c1, c2 = c2, c1
+        canon_bonds.append((c1, c2, bt))
+
+    canon_bonds.sort()
+
+    result = {
+        "center": canonical_atoms[0][2],
+        "hop1": canon_hop1,
+        "hop2": canon_hop2,
+        "bonds": canon_bonds,
+    }
+    if include_hop3:
+        result["hop3"] = canon_hop3
+
+    return result
 
 
-def encodeEnvKey(envDict: dict) -> str:
-    """Encode an environment dictionary as a SHA-256 hex string.
-
-    The dictionary is normalized by JSON serialization with sorted keys
-    and no whitespace, ensuring the same environment always produces
-    the same hash regardless of dict ordering.
+def encodeHop1Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    """Encode hop1 subgraph as SHA-256 hash.
 
     Args:
-        envDict: Environment dictionary to encode.
+        mol: RDKit molecule.
+        atom: Center atom.
 
     Returns:
-        64-character SHA-256 hexadecimal string.
+        64-character SHA-256 hex string.
     """
-    normalized = json.dumps(envDict, sort_keys=True, separators=(",", ":"))
+    subgraph = getHop1Subgraph(mol, atom)
+    center_idx = atom.GetIdx()
+    canonical = _canonicalizeSubgraph(subgraph, center_idx)
+    normalized = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def _stripHop2(envHop2: dict) -> dict:
-    """Strip hop2_shell from a hop2 environment dict to get hop1 env.
+def encodeHop2Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    """Encode hop2 subgraph as SHA-256 hash.
 
     Args:
-        envHop2: Full hop2 environment dictionary.
+        mol: RDKit molecule.
+        atom: Center atom.
 
     Returns:
-        Dictionary with hop2_shell key removed.
+        64-character SHA-256 hex string.
     """
-    return {k: v for k, v in envHop2.items() if k != "hop2_shell"}
+    subgraph = getHop2Subgraph(mol, atom)
+    center_idx = atom.GetIdx()
+    canonical = _canonicalizeSubgraph(subgraph, center_idx, include_hop3=False)
+    normalized = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def _stripHop1(envHop1: dict) -> dict:
-    """Strip hop1_shell from a hop1 environment dict to get hop0 env.
+def encodeHop3Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    """Encode hop3 subgraph as SHA-256 hash.
 
     Args:
-        envHop1: Hop1 environment dictionary (with hop1_shell).
+        mol: RDKit molecule.
+        atom: Center atom.
 
     Returns:
-        Dictionary with hop1_shell key removed.
+        64-character SHA-256 hex string.
     """
-    return {k: v for k, v in envHop1.items() if k != "hop1_shell"}
+    subgraph = getHop3Subgraph(mol, atom)
+    center_idx = atom.GetIdx()
+    canonical = _canonicalizeSubgraph(subgraph, center_idx, include_hop3=True)
+    normalized = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def _hop0Env(envHop2: dict) -> dict:
-    """Strip both hop1_shell and hop2_shell to get hop0 env.
-
-    This is equivalent to calling _stripHop2 then _stripHop1.
+def computeGraphHopKeys(mol: rdchem.Mol, atom: rdchem.Atom) -> tuple[str, str, str, str]:
+    """Compute hop3/hop2/hop1/hop0 keys using graph-based encoding.
 
     Args:
-        envHop2: Full hop2 environment dictionary.
+        mol: RDKit molecule.
+        atom: Center atom.
 
     Returns:
-        Dictionary with both hop1_shell and hop2_shell removed.
+        Tuple of (hop3Key, hop2Key, hop1Key, hop0Key).
     """
-    result = _stripHop2(envHop2)
-    result = _stripHop1(result)
-    return result
+    # hop3Key uses full hop3 graph
+    hop3_key = encodeHop3Graph(mol, atom)
+
+    # hop2Key uses hop2 subgraph
+    hop2_key = encodeHop2Graph(mol, atom)
+
+    # hop1Key uses hop1 subgraph
+    hop1_key = encodeHop1Graph(mol, atom)
+
+    # hop0Key uses only center atom properties
+    center_props = _atomProps(atom)
+    ring_info = mol.GetRingInfo()
+    center_props["ring_count"] = ring_info.NumAtomRings(atom.GetIdx())
+    hop0_key = hashlib.sha256(
+        json.dumps(center_props, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    return hop3_key, hop2_key, hop1_key, hop0_key

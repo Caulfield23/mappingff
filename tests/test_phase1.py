@@ -17,60 +17,42 @@ class TestMolReader:
 
     @pytest.fixture
     def segment2_mol(self):
-        return FIXTURES / "segdata" / "segment2" / "segment2.mol"
+        return FIXTURES / "segdata" / "segment2" / "segment2.pdb"
 
     def test_read_segment2_atoms(self, segment2_mol):
-        """Can read atoms from segment2.mol."""
+        """Can read atoms from segment2.pdb."""
         reader = MolReader(segment2_mol)
         atoms = reader.getAtoms()
-        assert len(atoms) == 55
-        assert atoms[0]["symbol"] == "C"
+        assert len(atoms) == 71
+        assert atoms[0]["symbol"] == "H"
 
     def test_read_segment2_bonds(self, segment2_mol):
-        """Can read bonds from segment2.mol."""
+        """Can read bonds from segment2.pdb."""
         reader = MolReader(segment2_mol)
         bonds = reader.getBonds()
-        assert len(bonds) == 56
+        assert len(bonds) == 73
 
     def test_read_segment2_coords(self, segment2_mol):
-        """Can read 3D coordinates from segment2.mol."""
+        """Can read 3D coordinates from segment2.pdb."""
         reader = MolReader(segment2_mol)
         coords = reader.getCoords()
-        assert len(coords) == 55
+        assert len(coords) == 71
         # Check first atom has x, y, z
         x, y, z = coords[1]
         assert isinstance(x, float)
         assert isinstance(y, float)
         assert isinstance(z, float)
 
-    def test_hop0_env(self, segment2_mol):
-        """Can compute hop0 environment for an atom."""
-        reader = MolReader(segment2_mol)
-        env = reader.computeHop0Env(1)
-        assert "z" in env
-        assert "neighbor_sig" in env
-        assert "bond_kinds" in env
-
-    def test_hop1_env(self, segment2_mol):
-        """Can compute hop1 environment for an atom."""
-        reader = MolReader(segment2_mol)
-        env = reader.computeHop1Env(1)
-        assert "hop1_shell" in env
-
-    def test_hop2_env(self, segment2_mol):
-        """Can compute hop2 environment for an atom."""
-        reader = MolReader(segment2_mol)
-        env = reader.computeHop2Env(1)
-        assert "hop2_shell" in env
-
     def test_compute_hop_keys(self, segment2_mol):
-        """Can compute hop2/hop1/hop0 keys for an atom."""
+        """Can compute hop3/hop2/hop1/hop0 keys for an atom."""
         reader = MolReader(segment2_mol)
-        hop2Key, hop1Key, hop0Key = computeHopKeys(reader, 1)
+        hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(reader, 1)
+        assert len(hop3Key) == 64
         assert len(hop2Key) == 64
         assert len(hop1Key) == 64
         assert len(hop0Key) == 64
         # Keys should be different
+        assert hop3Key != hop2Key
         assert hop2Key != hop1Key
         assert hop1Key != hop0Key
 
@@ -99,7 +81,7 @@ class TestMacroMapDB:
             "element": "C",
             "hop1_key": "hop1key",
             "hop0_key": "hop0key",
-            "hop2_env": {"z": 6, "neighbor_sig": "C2"},
+            "hop2_graph": {"center": {"z": 6}},
             "mass": 12.011,
             "sigma": 3.5,
             "epsilon": 0.066,
@@ -109,7 +91,7 @@ class TestMacroMapDB:
         assert result is not None
         assert result["element"] == "C"
         assert result["hop1_key"] == "hop1key"
-        assert result["hop2_env"]["z"] == 6
+        assert result["hop2_env"]["center"]["z"] == 6
 
     def test_save_and_reload(self, tmp_path):
         """DB can be saved and reloaded."""
@@ -120,7 +102,7 @@ class TestMacroMapDB:
             "element": "O",
             "hop1_key": "hop1key2",
             "hop0_key": "hop0key2",
-            "hop2_env": {"z": 8, "neighbor_sig": "C1"},
+            "hop2_graph": {"center": {"z": 8}},
             "mass": 15.999,
             "sigma": 3.0,
             "epsilon": 0.12,

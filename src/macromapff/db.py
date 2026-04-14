@@ -68,7 +68,7 @@ class MacroMapDB:
         if self._conn is None:
             raise RuntimeError("Database not loaded")
         cursor = self._conn.cursor()
-        cursor.execute("SELECT hop2_key, sigma_list, epsilon_list, charge_list FROM atom_types")
+        cursor.execute("SELECT hop3_key, sigma_list, epsilon_list, charge_list FROM atom_types")
         for row in cursor.fetchall():
             sigma_list = json.loads(row["sigma_list"])
             epsilon_list = json.loads(row["epsilon_list"])
@@ -79,8 +79,8 @@ class MacroMapDB:
             cursor.execute("""
                 UPDATE atom_types
                 SET sigma = ?, epsilon = ?, charge = ?
-                WHERE hop2_key = ?
-            """, (avg_sigma, avg_epsilon, avg_charge, row["hop2_key"]))
+                WHERE hop3_key = ?
+            """, (avg_sigma, avg_epsilon, avg_charge, row["hop3_key"]))
 
     def _finalizeBondedParams(self) -> None:
         """Compute averaged bonded parameters from lists and update scalar columns."""
@@ -188,7 +188,7 @@ class MacroMapDB:
             )
         """)
 
-        # Atom types table (hop2 level)
+        # Atom types table (hop3 level as finest classification)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS atom_types (
                 lammps_type INTEGER,
@@ -201,10 +201,11 @@ class MacroMapDB:
                 charge REAL,
                 charge_list TEXT,
                 source TEXT,
-                hop2_key TEXT PRIMARY KEY,
+                hop3_key TEXT PRIMARY KEY,
+                hop2_key TEXT,
                 hop1_key TEXT,
                 hop0_key TEXT,
-                hop2_env TEXT
+                hop2_graph TEXT
             )
         """)
 
@@ -212,6 +213,14 @@ class MacroMapDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS hop1_keymap (
                 hop1_key TEXT PRIMARY KEY,
+                lammps_types TEXT
+            )
+        """)
+
+        # hop2 keymap (for external validation only)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hop2_keymap (
+                hop2_key TEXT PRIMARY KEY,
                 lammps_types TEXT
             )
         """)
@@ -275,30 +284,30 @@ class MacroMapDB:
 
         self._conn.commit()
 
-    # ── atom_types operations (hop2 level) ─────────────────────────────────────
+    # ── atom_types operations (hop3 level) ─────────────────────────────────────
 
-    def insertAtomType(self, hop2Key: str, info: dict) -> None:
-        """Insert or update an atom type entry at hop2 level.
+    def insertAtomType(self, hop3Key: str, info: dict) -> None:
+        """Insert or update an atom type entry at hop3 level (finest classification).
 
-        If hop2Key already exists, merge sigma_list, epsilon_list, and source list.
-        If hop2Key is new, assign a unique lammps_type.
+        If hop3Key already exists, merge sigma_list, epsilon_list, and source list.
+        If hop3Key is new, assign a unique lammps_type.
 
         Args:
-            hop2Key: SHA-256 key computed from hop2 environment.
-            info: Dictionary containing element, hop1_key, hop0_key, hop2_env,
-                  mass, sigma, epsilon, source.
+            hop3Key: SHA-256 key computed from hop3 environment (finest level).
+            info: Dictionary containing element, hop1_key, hop0_key, hop2_key,
+                  hop2_graph, mass, sigma, epsilon, source.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
 
-        # Check if hop2Key already exists
-        cursor.execute("SELECT * FROM atom_types WHERE hop2_key = ?", (hop2Key,))
+        # Check if hop3Key already exists
+        cursor.execute("SELECT * FROM atom_types WHERE hop3_key = ?", (hop3Key,))
         existing = cursor.fetchone()
 
         if existing is not None:
-            # hop2Key exists - merge sigma_list, epsilon_list, charge_list, and source
+            # hop3Key exists - merge sigma_list, epsilon_list, charge_list, and source
             existing_sigma = json.loads(existing["sigma_list"])
             existing_epsilon = json.loads(existing["epsilon_list"])
             existing_charge = json.loads(existing["charge_list"])
@@ -312,10 +321,10 @@ class MacroMapDB:
             cursor.execute("""
                 UPDATE atom_types
                 SET epsilon_list = ?, sigma_list = ?, charge_list = ?, source = ?
-                WHERE hop2_key = ?
-            """, (json.dumps(new_epsilon), json.dumps(new_sigma), json.dumps(new_charge), json.dumps(new_sources), hop2Key))
+                WHERE hop3_key = ?
+            """, (json.dumps(new_epsilon), json.dumps(new_sigma), json.dumps(new_charge), json.dumps(new_sources), hop3Key))
         else:
-            # hop2Key is new - get next available lammps_type
+            # hop3Key is new - get next available lammps_type
             cursor.execute("SELECT MAX(lammps_type) FROM atom_types")
             row = cursor.fetchone()
             max_type = row[0] if row[0] is not None else 0
@@ -323,12 +332,13 @@ class MacroMapDB:
 
             cursor.execute("""
                 INSERT INTO atom_types
-                (hop2_key, element, hop1_key, hop0_key, lammps_type,
+                (hop3_key, hop2_key, element, hop1_key, hop0_key, lammps_type,
                  mass, sigma, epsilon, sigma_list, epsilon_list,
-                 charge, charge_list, source, hop2_env)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 charge, charge_list, source, hop2_graph)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                hop2Key,
+                hop3Key,
+                info.get("hop2_key"),
                 info["element"],
                 info["hop1_key"],
                 info["hop0_key"],
@@ -341,14 +351,14 @@ class MacroMapDB:
                 round(info.get("charge", 0.0), 6),
                 json.dumps([round(info.get("charge", 0.0), 6)]),
                 json.dumps(info["source"]),
-                json.dumps(info.get("hop2_env", {})),
+                json.dumps(info.get("hop2_graph", {})),
             ))
 
-    def getAtomType(self, hop2Key: str) -> dict | None:
-        """Retrieve an atom type entry by hop2 key.
+    def getAtomType(self, hop3Key: str) -> dict | None:
+        """Retrieve an atom type entry by hop3 key.
 
         Args:
-            hop2Key: SHA-256 key computed from hop2 environment.
+            hop3Key: SHA-256 key computed from hop3 environment.
 
         Returns:
             Atom type info dict if found, None otherwise.
@@ -357,13 +367,14 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("SELECT * FROM atom_types WHERE hop2_key = ?", (hop2Key,))
+        cursor.execute("SELECT * FROM atom_types WHERE hop3_key = ?", (hop3Key,))
         row = cursor.fetchone()
         if row is None:
             return None
 
         return {
             "element": row["element"],
+            "hop2_key": row["hop2_key"],
             "hop1_key": row["hop1_key"],
             "hop0_key": row["hop0_key"],
             "lammps_type": row["lammps_type"],
@@ -375,7 +386,7 @@ class MacroMapDB:
             "epsilon_list": json.loads(row["epsilon_list"]),
             "charge_list": json.loads(row["charge_list"]),
             "source": json.loads(row["source"]),
-            "hop2_env": json.loads(row["hop2_env"]) if row["hop2_env"] else {},
+            "hop2_env": json.loads(row["hop2_graph"]) if row["hop2_graph"] else {},
         }
 
     # ── hop1_keymap operations ─────────────────────────────────────────────────
@@ -411,6 +422,38 @@ class MacroMapDB:
                 INSERT INTO hop1_keymap (hop1_key, lammps_types)
                 VALUES (?, ?)
             """, (hop1Key, json.dumps([lammpsType])))
+
+    def insertHop2Key(self, hop2Key: str, lammpsType: int) -> None:
+        """Insert or update a hop2_keymap entry.
+
+        The hop2_keymap provides hop2-level fallback for atom typing.
+        Multiple hop3 entries may map to the same hop2 key, so lammps_types
+        is stored as a list to track all possible types.
+
+        Args:
+            hop2Key: SHA-256 key computed from hop2 environment.
+            lammpsType: LAMMPS atom type ID.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not loaded")
+
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT lammps_types FROM hop2_keymap WHERE hop2_key = ?", (hop2Key,))
+        row = cursor.fetchone()
+
+        if row is not None:
+            lammps_types = json.loads(row["lammps_types"])
+            if lammpsType not in lammps_types:
+                lammps_types.append(lammpsType)
+                lammps_types.sort()
+            cursor.execute("""
+                UPDATE hop2_keymap SET lammps_types = ? WHERE hop2_key = ?
+            """, (json.dumps(lammps_types), hop2Key))
+        else:
+            cursor.execute("""
+                INSERT INTO hop2_keymap (hop2_key, lammps_types)
+                VALUES (?, ?)
+            """, (hop2Key, json.dumps([lammpsType])))
 
     # ── hop0_keymap operations ────────────────────────────────────────────────
 
@@ -636,16 +679,20 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        if hop0KeyA <= hop0KeyD:
+        # Dihedral (A,B,C,D) is equivalent to (D,C,B,A)
+        # Choose lexicographically smaller key to normalize
+        key_normal = (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
+        key_reversed = (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA)
+        if key_reversed < key_normal:
             cursor.execute("""
                 SELECT coeffs FROM dihedral_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD))
+            """, key_reversed)
         else:
             cursor.execute("""
                 SELECT coeffs FROM dihedral_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA))
+            """, key_normal)
         row = cursor.fetchone()
         if row is None:
             return None
@@ -734,13 +781,13 @@ class MacroMapDB:
         if self._conn is None:
             raise RuntimeError("Database not loaded")
 
-        for hop2Key, info in sampleData.get("atom_types", {}).items():
-            existing = self.getAtomType(hop2Key)
+        for hop3Key, info in sampleData.get("atom_types", {}).items():
+            existing = self.getAtomType(hop3Key)
             if existing is not None:
                 merged_sources = list(set(existing["source"]) | set(info["source"]))
-                self.insertAtomType(hop2Key, {**info, "source": merged_sources})
+                self.insertAtomType(hop3Key, {**info, "source": merged_sources})
             else:
-                self.insertAtomType(hop2Key, info)
+                self.insertAtomType(hop3Key, info)
 
         for hop1Key, entry in sampleData.get("hop1_keymap", {}).items():
             cursor = self._conn.cursor()
@@ -834,8 +881,10 @@ class MacroMapDB:
         result["atom_types"] = {}
         cursor.execute("SELECT * FROM atom_types")
         for row in cursor.fetchall():
-            result["atom_types"][row["hop2_key"]] = {
+            result["atom_types"][row["hop3_key"]] = {
                 "element": row["element"],
+                "hop2_key": row["hop2_key"],
+                "hop1_key": row["hop1_key"],
                 "hop0_key": row["hop0_key"],
                 "lammps_type": row["lammps_type"],
                 "mass": row["mass"],
@@ -895,10 +944,10 @@ class MacroMapDB:
 
     @property
     def atomTypes(self) -> dict:
-        """Get the atom_types table (hop2 level).
+        """Get the atom_types table (hop3 level as finest classification).
 
         Returns:
-            Dictionary mapping hop2 keys to atom type info.
+            Dictionary mapping hop3 keys to atom type info.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -907,8 +956,10 @@ class MacroMapDB:
         result: dict[str, dict] = {}
         cursor.execute("SELECT * FROM atom_types")
         for row in cursor.fetchall():
-            result[row["hop2_key"]] = {
+            result[row["hop3_key"]] = {
                 "element": row["element"],
+                "hop2_key": row["hop2_key"],
+                "hop1_key": row["hop1_key"],
                 "hop0_key": row["hop0_key"],
                 "lammps_type": row["lammps_type"],
                 "mass": row["mass"],
@@ -934,6 +985,25 @@ class MacroMapDB:
         cursor.execute("SELECT * FROM hop1_keymap")
         for row in cursor.fetchall():
             result[row["hop1_key"]] = {
+                "lammps_types": json.loads(row["lammps_types"]),
+            }
+        return result
+
+    @property
+    def hop2Keymap(self) -> dict:
+        """Get the hop2_keymap table.
+
+        Returns:
+            Dictionary mapping hop2 keys to {lammps_types}.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not loaded")
+
+        cursor = self._conn.cursor()
+        result: dict[str, dict] = {}
+        cursor.execute("SELECT * FROM hop2_keymap")
+        for row in cursor.fetchall():
+            result[row["hop2_key"]] = {
                 "lammps_types": json.loads(row["lammps_types"]),
             }
         return result

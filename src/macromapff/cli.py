@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from macromapff.db import MacroMapDB
+from macromapff.encode import getHop2Subgraph, getHop3Subgraph
 from macromapff.lmp import parseLammps
 from macromapff.mol import MolReader, computeHopKeys
 from macromapff.utils import USER_DEFAULT_DB_PATH, setupLogging
@@ -95,8 +96,9 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
         # Process each atom
         for atom in atoms:
             atomIdx = atom["idx"]
-            hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
-            hop2Env = molReader.computeHop2Env(atomIdx)
+            hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
+            rd_atom = molReader.mol.GetAtomWithIdx(atomIdx - 1)
+            hop2_graph = getHop2Subgraph(molReader.mol, rd_atom)
             atomHop0Key[atomIdx] = hop0Key
 
             # Get LAMMPS type from the sample data
@@ -120,13 +122,14 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
                 None,
             )
 
-            # Insert atom type at hop2 level
-            # lammps_type is auto-generated to ensure uniqueness per hop2Key
-            db.insertAtomType(hop2Key, {
+            # Insert atom type at hop3 level (finest classification)
+            # lammps_type is auto-generated to ensure uniqueness per hop3Key
+            db.insertAtomType(hop3Key, {
                 "element": atom["symbol"],
+                "hop2_key": hop2Key,
                 "hop1_key": hop1Key,
                 "hop0_key": hop0Key,
-                "hop2_env": hop2Env,
+                "hop2_graph": hop2_graph,
                 "mass": mass[1] if mass else 0.0,
                 "sigma": pairCoeff[2] if pairCoeff else 0.0,
                 "epsilon": pairCoeff[1] if pairCoeff else 0.0,
@@ -135,8 +138,11 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
             })
 
             # Get the auto-generated lammps_type from database
-            inserted_info = db.getAtomType(hop2Key)
+            inserted_info = db.getAtomType(hop3Key)
             assigned_lammps_type = inserted_info["lammps_type"]
+
+            # Insert hop2 keymap (for external validation only)
+            db.insertHop2Key(hop2Key, assigned_lammps_type)
 
             # Insert hop1 keymap (for external validation only)
             db.insertHop1Key(hop1Key, assigned_lammps_type)
@@ -226,11 +232,10 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
             if dihCoeff is None:
                 continue
 
-            # Canonical key (outer atoms swappable)
-            if hop0KeyA <= hop0KeyD:
-                key = (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
-            else:
-                key = (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA)
+            # Canonical key (A,B,C,D) and (D,C,B,A) are equivalent, pick lexicographically smaller
+            key_normal = (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
+            key_reversed = (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA)
+            key = key_reversed if key_reversed < key_normal else key_normal
 
             db.insertDihedralParam(key, {"coeffs": dihCoeff[1:]})
 
@@ -279,12 +284,14 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
     log.info(f"Samples: {len(sampleDirs)}")
     log.info(f"Atoms/Bonds processed: {totalAtoms} atoms, {totalBonds} bonds, "
              f"{totalAngles} angles, {totalDihedrals} dihedrals, {totalImpropers} impropers")
-    log.info(f"Atom type entries (hop2 level): {len(db.atomTypes)}")
+    log.info(f"Atom type entries (hop3 level): {len(db.atomTypes)}")
+    log.info(f"Hop2 keymap entries: {len(db.hop2Keymap)}")
     log.info(f"Hop1 keymap entries: {len(db.hop1Keymap)}")
     log.info(f"Hop0 keymap entries: {len(db.hop0Keymap)}")
     log.info(f"  Note: hop0 groups by immediate neighbor signatures only (coarse)")
     log.info(f"  hop1 adds 2nd-order neighbor details (finer)")
-    log.info(f"  Therefore hop1 >= hop0 in entry count")
+    log.info(f"  hop2 adds 3rd-order neighbor details (even finer)")
+    log.info(f"  hop3 adds 4th-order neighbor details (finest)")
     log.info(f"Bonded parameter entries:")
     log.info(f"  Bonds: {len(db.bondParams)}")
     log.info(f"  Angles: {len(db.angleParams)}")
@@ -306,6 +313,7 @@ def parameterize(
     dbPath: Path,
     outPath: Path | None = None,
     verbose: bool = False,
+    total_charge: float = 0.0,
 ) -> dict:
     """Parameterize a target molecule using the database.
 
@@ -314,6 +322,8 @@ def parameterize(
         dbPath: Path to the SQLite database file.
         outPath: Output LAMMPS file path. If None, uses <mol_file>_param.lmp.
         verbose: If True, print detailed progress.
+        total_charge: Target total charge for the system (default: 0).
+            Charge will be adjusted evenly across all non-hydrogen atoms.
 
     Returns:
         Dictionary with parameterization statistics.
@@ -324,7 +334,8 @@ def parameterize(
     db = MacroMapDB(dbPath)
     db.load()
     log.info(f"Database loaded from {dbPath}")
-    log.info(f"  Atom types: {len(db.atomTypes)}")
+    log.info(f"  Atom types (hop3 level): {len(db.atomTypes)}")
+    log.info(f"  Hop2 keymap: {len(db.hop2Keymap)}")
     log.info(f"  Hop1 keymap: {len(db.hop1Keymap)}")
     log.info(f"  Hop0 keymap: {len(db.hop0Keymap)}")
     log.info(f"  Bond params: {len(db.bondParams)}")
@@ -351,7 +362,9 @@ def parameterize(
 
     atomTypeMap: dict[int, int] = {}  # atomIdx -> lammpsType (resolved from db)
     atomHop0Key: dict[int, str] = {}  # atomIdx -> hop0Key (resolved from db)
-    atomHop2Key: dict[int, str] = {}  # atomIdx -> hop2Key (for typeInfo lookup)
+    atomHop3Key: dict[int, str] = {}  # atomIdx -> hop3Key (for typeInfo lookup)
+    atomFallbackLevel: dict[int, str] = {}  # atomIdx -> fallback level (hop2/hop1/hop0)
+    hop3Matches = 0
     hop2Matches = 0
     hop1Matches = 0
     hop0Matches = 0
@@ -359,29 +372,37 @@ def parameterize(
 
     for atom in atoms:
         atomIdx = atom["idx"]
-        hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
+        hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
         atomHop0Key[atomIdx] = hop0Key
-        atomHop2Key[atomIdx] = hop2Key
+        atomHop3Key[atomIdx] = hop3Key
 
         lammpsType, resolvedHop0Key = resolveAtomType(
-            hop2Key, hop1Key, hop0Key, atom["symbol"], db
+            hop3Key, hop2Key, hop1Key, hop0Key, db
         )
         # Use lammpsType as the type identifier
         atomTypeMap[atomIdx] = lammpsType
         atomHop0Key[atomIdx] = resolvedHop0Key
 
-        # Log atom type assignment
-        log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType}")
-
         # Track match statistics
-        if hop2Key in db.atomTypes:
+        if hop3Key in db.atomTypes:
+            hop3Matches += 1
+            log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType}")
+        elif hop2Key in db.hop2Keymap:
             hop2Matches += 1
+            atomFallbackLevel[atomIdx] = "hop2"
+            log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop2 fallback)")
         elif hop1Key in db.hop1Keymap:
             hop1Matches += 1
+            atomFallbackLevel[atomIdx] = "hop1"
+            log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop1 fallback)")
         elif hop0Key in db.hop0Keymap:
             hop0Matches += 1
+            atomFallbackLevel[atomIdx] = "hop0"
+            log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop0 fallback)")
         else:
             noMatch += 1
+            atomFallbackLevel[atomIdx] = "none"
+            log.debug(f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (NO MATCH)")
 
     # Look up bond parameters
     bondParamMap: dict[int, dict] = {}  # bondIdx -> {k, r0}
@@ -594,7 +615,8 @@ def parameterize(
     log.info(f"Improper parameters: {len(improperParamMap)} impropers, {len(improperTypeParams)} unique types, {improperNoMatch} no match")
 
     log.info(f"Atom type assignment: {len(atoms)} atoms, {len(uniqueTypes)} unique types, {noMatch} no match")
-    log.info(f"  hop2 exact matches: {hop2Matches}")
+    log.info(f"  hop3 exact matches: {hop3Matches}")
+    log.info(f"  hop2 fallback: {hop2Matches}")
     log.info(f"  hop1 fallback: {hop1Matches}")
     log.info(f"  hop0 fallback: {hop0Matches}")
     log.info(f"  no match: {noMatch}")
@@ -749,6 +771,17 @@ def parameterize(
             a4 = improper["a4"]
             lmpData.improper_records.append((impIdx, it, a1, a2, a3, a4))
 
+    # Adjust total charge if needed (non-hydrogen atoms only)
+    from macromapff.lmp import adjustTotalCharge
+    before_charge = sum(atom[3] for atom in lmpData.atom_records)
+    if total_charge is not None:
+        adjustTotalCharge(lmpData, total_charge)
+    after_charge = sum(atom[3] for atom in lmpData.atom_records)
+    if total_charge is not None:
+        log.info(f"Total charge: {after_charge:.6f} (adjusted from {before_charge:.6f}, target: {total_charge})")
+    else:
+        log.info(f"Total charge: {after_charge:.6f}")
+
     # Write LAMMPS file
     from macromapff.lmp import generateLammps
     generateLammps(lmpData, outPath)
@@ -761,6 +794,7 @@ def parameterize(
         "dihedrals": len(dihedralParamMap),
         "impropers": len(improperParamMap),
         "unique_types": len(uniqueTypes),
+        "hop3_matches": hop3Matches,
         "hop2_matches": hop2Matches,
         "hop1_matches": hop1Matches,
         "hop0_matches": hop0Matches,
@@ -837,6 +871,12 @@ def main() -> None:
         action="store_true",
         help="Print detailed progress",
     )
+    param_parser.add_argument(
+        "-c", "--charge",
+        type=float,
+        default=0.0,
+        help="Target total charge for the system (default: 0)",
+    )
 
     args = parser.parse_args()
 
@@ -858,6 +898,7 @@ def main() -> None:
             args.db_path,
             args.out,
             args.verbose,
+            args.charge,
         )
         print(f"Parameterize complete: {result['atoms']} atoms, "
               f"{result['bonds']} bonds, "

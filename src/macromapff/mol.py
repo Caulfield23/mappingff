@@ -318,114 +318,22 @@ class MolReader:
 
         return impropers
 
-    def computeHop0Env(self, atomIdx: int) -> dict:
-        """Compute hop0 level environment for an atom.
-
-        Hop0 is the coarsest environment descriptor. It captures:
-            - Center atom properties (z, charge, degree, hybridization, ring membership)
-            - Neighbor signatures: "atomicNum:bondType:formalCharge" for each neighbor
-            - Bond kind list: sorted list of S/D/T/A/U codes for each bond
-
-        This level is used for bonded parameter matching (bond/angle/dihedral/improper)
-        because it captures the immediate chemical environment without 2nd-order details.
-
-        Args:
-            atomIdx: 1-based atom index.
-
-        Returns:
-            Dictionary with keys:
-                - z: atomic number
-                - formal_charge: formal charge
-                - degree: total degree
-                - hybridization: hybridization as string
-                - in_ring: 0 or 1
-                - ring_count: number of rings atom participates in
-                - total_hs: number of implicit hydrogens
-                - neighbor_sig: sorted list of "z:bondType:charge" strings
-                - bond_kinds: sorted list of S/D/T/A/U codes
-        """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
-        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)  # RDKit uses 0-based
-        return encode.encodeAtomEnvHop0(self._mol, rd_atom)
-
-    def computeHop1Env(self, atomIdx: int) -> dict:
-        """Compute hop1 level environment for an atom.
-
-        Hop1 extends hop0 by adding the hop1_shell, which contains detailed
-        properties of first neighbors (their element, aromaticity, degree, etc.).
-
-        This level is used for the first fallback step in atom typing when
-        no exact hop2 match is found.
-
-        Args:
-            atomIdx: 1-based atom index.
-
-        Returns:
-            Dictionary with all hop0 keys plus:
-                - hop1_shell: list of neighbor descriptors, each with z, ar, deg, fc, h, ring, bt
-        """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
-        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)
-        return encode.encodeAtomEnvHop1(self._mol, rd_atom)
-
-    def computeHop2Env(self, atomIdx: int) -> dict:
-        """Compute hop2 level environment for an atom.
-
-        Hop2 extends hop1 by adding the hop2_shell, which contains detailed
-        properties of second neighbors (neighbors of neighbors, excluding the
-        center and hop1 atoms).
-
-        This is the finest-grained environment descriptor and provides the
-        most specific atom type identification when an exact match exists.
-
-        Args:
-            atomIdx: 1-based atom index.
-
-        Returns:
-            Dictionary with all hop1 keys plus:
-                - hop2_shell: list of 2nd-order neighbor descriptors
-        """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
-        rd_atom = self._mol.GetAtomWithIdx(atomIdx - 1)
-        return encode.encodeAtomEnvHop2(self._mol, rd_atom)
-
 
 # ── Convenience Re-exports from encode.py ──────────────────────────────────────
 
 
-def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str]:
-    """Compute hop2, hop1, and hop0 keys for an atom.
-
-    This is a convenience wrapper that:
-        1. Computes hop0/hop1/hop2 environments using MolReader
-        2. Calls encode.computeHopKeys on the hop2 env dict
+def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, str]:
+    """Compute hop3, hop2, hop1, and hop0 keys for an atom using graph-based encoding.
 
     Args:
         molReader: MolReader instance with loaded molecule.
         atomIdx: 1-based atom index.
 
     Returns:
-        Tuple of (hop2Key, hop1Key, hop0Key), all 64-char hex strings.
+        Tuple of (hop3Key, hop2Key, hop1Key, hop0Key), all 64-char hex strings.
     """
-    envHop2 = molReader.computeHop2Env(atomIdx)
-    return encode.computeHopKeys(envHop2)
+    if molReader._mol is None:
+        raise RuntimeError("Molecule not loaded")
 
-
-def encodeEnvKey(envDict: dict) -> str:
-    """Encode an environment dictionary as a SHA-256 hex string.
-
-    Delegates to encode.encodeEnvKey.
-
-    Args:
-        envDict: Environment dictionary to encode.
-
-    Returns:
-        64-character SHA-256 hexadecimal string.
-    """
-    return encode.encodeEnvKey(envDict)
+    rd_atom = molReader._mol.GetAtomWithIdx(atomIdx - 1)
+    return encode.computeGraphHopKeys(molReader._mol, rd_atom)
