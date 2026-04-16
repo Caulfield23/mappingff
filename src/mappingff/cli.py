@@ -33,7 +33,7 @@ def main() -> None:
         "-d", "--db",
         type=Path,
         default=USER_DEFAULT_DB_PATH,
-        help="Output database file path (default: ./database/db.db)",
+        help="Output database file path (default: samples.db)",
     )
     build_parser.add_argument(
         "-v", "--verbose",
@@ -51,13 +51,13 @@ def main() -> None:
     param_parser.add_argument(
         "-o", "--out",
         type=Path,
-        help="Output LAMMPS file path (default: <mol_file>_param.lmp)",
+        help="Output LAMMPS file path (default: <mol_file>.lmp)",
     )
     param_parser.add_argument(
         "-d", "--db",
         type=Path,
         default=USER_DEFAULT_DB_PATH,
-        help="Path to database file (default: ./database/db.db)",
+        help="Path to database file (default: samples.db)",
     )
     param_parser.add_argument(
         "-v", "--verbose",

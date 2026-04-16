@@ -15,12 +15,15 @@ Molecular force field parameterization pipeline for generating LAMMPS data files
 
 ### Requirements
 
-- Python 3.7+
-- RDKit (`rdkit-pypi>=2022.9.5`)
+- Python 3.10+
+- RDKit (`rdkit>=2026.03.1`, via conda-forge)
 
-### Install from source
+### Installation
 
 ```bash
+git clone https://github.com/Caulfield23/mappingff.git
+cd mappingff
+conda install -c conda-forge rdkit
 pip install -e .
 ```
 
@@ -28,35 +31,37 @@ pip install -e .
 
 ### 1. Build a parameter database
 
-Prepare a directory structure with sample molecules:
+Prepare a directory structure with sample molecules(`.mol` or `.pdb`):
 
 ```
-samples/
-├── segment1/
-│   ├── segment1.pdb       # Molecular structure
-│   └── segment1.lammps.lmp # Reference LAMMPS parameters
-├── segment2/
-│   ├── segment2.pdb
-│   └── segment2.lammps.lmp
-└── ...
+workdir/
+├── samples/
+│   ├── segment1/
+│   │   ├── segment1.mol       # Molecular structure (recommended)
+│   │   └── segment1.lmp      # Reference LAMMPS parameters
+│   ├── segment2/
+│   │   ├── segment2.mol      # Molecular structure (recommended)
+│   │   └── segment2.lmp
+│   └── ...
+└── target.mol               # Target molecule to parameterize (recommended)
 ```
 
 Build the database:
 
 ```bash
-mappingff build-db samples/ -d ./database/db.db
+mappingff build-db samples/ -d samples.db
 ```
 
 ### 2. Parameterize a target molecule
 
 ```bash
-mappingff parameterize target.mol -d ./database/db.db --out target_param.lmp
+mappingff parameterize target.mol -d samples.db
 ```
 
 Or with charge adjustment:
 
 ```bash
-mappingff parameterize target.mol -d ./database/db.db -c 0.0
+mappingff parameterize target.mol -d samples.db -c 0.0
 ```
 
 ## CLI Commands
@@ -69,7 +74,7 @@ Build a parameter database from sample molecules.
 mappingff build-db <samples_dir> [options]
 
 Options:
-  -d, --db PATH        Output database file path (default: ./database/db.db)
+  -d, --db PATH        Output database file path (default: samples.db)
   -v, --verbose        Print detailed progress
 ```
 
@@ -81,8 +86,8 @@ Parameterize a target molecule and generate LAMMPS file.
 mappingff parameterize <mol_file> [options]
 
 Options:
-  -d, --db PATH        Path to database file (default: ./database/db.db)
-  -o, --out PATH       Output LAMMPS file (default: <mol_file>_param.lmp)
+  -d, --db PATH        Path to database file (default: samples.db)
+  -o, --out PATH       Output LAMMPS file (default: <mol_file>.lmp)
   -c, --charge FLOAT  Target total charge (default: 0)
   -v, --verbose        Print detailed progress
 ```
@@ -106,12 +111,12 @@ Each environment is canonicalized and hashed to a SHA-256 key, enabling efficien
 
 When parameterizing a target molecule, mappingff tries to match atoms at progressively more general levels:
 
-1. **hop3 exact match** - Most specific, based on full 4-hop environment
-2. **hop2 fallback** - Based on 3-hop environment
-3. **hop1 fallback** - Based on 2-hop environment
+1. **hop3 matching** - Based on 3-hop environment
+2. **hop2 fallback** - Based on 2-hop environment
+3. **hop1 fallback** - Based on 1-hop environment
 4. **hop0 fallback** - Based on immediate neighbors only
 
-This ensures every atom gets assigned parameters even if its exact environment wasn't in the training data.
+mappingff makes a best-effort attempt to ensure every atom is assigned a parameter at the most specific level possible. Atoms that cannot be matched at any level are logged as `no_match` in the output.
 
 ### Canonical Keys for Bonded Parameters
 
@@ -139,7 +144,7 @@ from mappingff import buildDb, parameterize
 # Build database
 result = buildDb(
     samplesDir=Path("samples"),
-    dbPath=Path("database/db"),
+    dbPath=Path("database/db.db"),
     verbose=True
 )
 print(f"Built database with {result['atoms_processed']} atoms")
@@ -147,8 +152,8 @@ print(f"Built database with {result['atoms_processed']} atoms")
 # Parameterize molecule
 result = parameterize(
     molPath=Path("target.mol"),
-    dbPath=Path("database/db"),
-    outPath=Path("target_param.lmp"),
+    dbPath=Path("database/db.db"),
+    outPath=Path("target.lmp"),
     total_charge=0.0,
     verbose=True
 )
@@ -176,8 +181,8 @@ The SQLite database contains:
 ### Input: Sample Molecules
 
 Each sample directory should contain:
-- **Structure file**: `.mol` (MDL Molfile) or `.pdb` (PDB format)
-- **Reference LAMMPS file**: `.lmp` or `.lammps.lmp` with known parameters
+- **Structure file**: `.mol` (recommended) or `.pdb` (PDB format)
+- **Reference LAMMPS file**: `.lmp` with known parameters
 
 ### Output: LAMMPS Data Files
 

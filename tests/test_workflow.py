@@ -1,8 +1,4 @@
-"""Standard workflow tests: build-db -> parameterize.
-
-These tests run the full workflow end-to-end and store artifacts
-in tests/standard/workflow_output for user review.
-"""
+"""Standard workflow tests: build-db -> parameterize."""
 
 import logging
 from pathlib import Path
@@ -13,9 +9,8 @@ from mappingff.workflow import buildDb, parameterize
 
 # Base path for test fixtures
 FIXTURES = Path(__file__).parent / "standard"
-SEG_DATA = FIXTURES / "segdata"
-TARGET_DIR = FIXTURES / "target"
-OUTPUT_DIR = FIXTURES / "workflow_output"
+SEG_DATA = FIXTURES / "samples"
+TARGET_FILE = FIXTURES / "target.mol"
 
 
 class TestStandardWorkflow:
@@ -23,32 +18,21 @@ class TestStandardWorkflow:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Set up test output directory, cleaning old artifacts once."""
-        self.output_dir = OUTPUT_DIR
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Clean up old output files to ensure fresh test run
-        for f in self.output_dir.iterdir():
-            if f.is_file():
-                f.unlink()
-
-        self.db_path = self.output_dir / "db.db"
-        self.param_output = self.output_dir / "PS-oDMS7POSS_param.lmp"
-        self.build_log = self.output_dir / "build-db.log"
-        self.param_log = self.output_dir / "parameterize.log"
+        """Set up output paths under FIXTURES directory."""
+        self.db_path = FIXTURES / "samples.db"
+        self.build_log = FIXTURES / "build-db.log"
+        self.param_log = FIXTURES / "parameterize.log"
 
     def test_full_workflow(self):
         """Run the complete build-db -> parameterize workflow end-to-end."""
         # Set up file handler for build-db logging
-        build_file_handler = logging.FileHandler(self.build_log, mode="w")
-        build_file_handler.setLevel(logging.DEBUG)
-        build_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        build_file_handler.setFormatter(build_formatter)
-
+        build_handler = logging.FileHandler(self.build_log, mode="w")
+        build_handler.setLevel(logging.DEBUG)
+        build_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         root_logger = logging.getLogger()
         original_level = root_logger.level
         root_logger.setLevel(logging.DEBUG)
-        root_logger.addHandler(build_file_handler)
+        root_logger.addHandler(build_handler)
 
         try:
             # Step 1: Build database
@@ -57,24 +41,21 @@ class TestStandardWorkflow:
             assert result["atoms_processed"] == 318
             assert self.db_path.exists()
         finally:
-            root_logger.removeHandler(build_file_handler)
+            root_logger.removeHandler(build_handler)
             root_logger.setLevel(original_level)
-            build_file_handler.close()
+            build_handler.close()
 
         # Set up file handler for parameterize logging
-        param_file_handler = logging.FileHandler(self.param_log, mode="w")
-        param_file_handler.setLevel(logging.DEBUG)
-        param_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-        param_file_handler.setFormatter(param_formatter)
-
+        param_handler = logging.FileHandler(self.param_log, mode="w")
+        param_handler.setLevel(logging.DEBUG)
+        param_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
-        root_logger.addHandler(param_file_handler)
+        root_logger.addHandler(param_handler)
 
         try:
             # Step 2: Parameterize target molecule using built database
-            mol_path = TARGET_DIR / "PS-oDMS7POSS.mol"
-            result = parameterize(mol_path, self.db_path, self.param_output, verbose=True)
+            result = parameterize(TARGET_FILE, self.db_path, verbose=True)
 
             # Verify parameterization results
             assert result["atoms"] == 3313
@@ -82,19 +63,20 @@ class TestStandardWorkflow:
             assert result["angles"] > 0
             assert result["dihedrals"] > 0
             assert result["impropers"] > 0
-            assert result["unique_types"] == 37  # hop3 classification is more specific
+            assert result["unique_types"] == 37
             assert result["hop3_matches"] == 2536
-            assert result["hop2_matches"] == 543  # hop2 fallback
+            assert result["hop2_matches"] == 543
             assert result["hop1_matches"] == 234
             assert result["hop0_matches"] == 0
             assert result["no_match"] == 0
 
             # Verify output file exists and has content
-            assert self.param_output.exists()
-            assert self.param_output.stat().st_size > 400000  # ~400KB
+            param_out = FIXTURES / "target.lmp"
+            assert param_out.exists()
+            assert param_out.stat().st_size > 400000
 
             # Step 3: Verify LAMMPS file format
-            content = self.param_output.read_text()
+            content = param_out.read_text()
 
             # Check header
             assert "LAMMPS data file Generated by mappingff" in content
@@ -103,11 +85,11 @@ class TestStandardWorkflow:
             assert "3313 atoms" in content
             assert "3486 bonds" in content
             assert "6245 angles" in content
-            assert "9652 dihedrals" in content  # was 9646 before dihedral fix
+            assert "9652 dihedrals" in content
             assert "2973 impropers" in content
 
             # Check type counts
-            assert "37 atom types" in content  # hop3 classification gives finer granularity
+            assert "37 atom types" in content
             assert "18 bond types" in content
             assert "31 angle types" in content
             assert "26 dihedral types" in content
@@ -126,6 +108,6 @@ class TestStandardWorkflow:
             assert "Dihedrals" in content
             assert "Impropers" in content
         finally:
-            root_logger.removeHandler(param_file_handler)
+            root_logger.removeHandler(param_handler)
             root_logger.setLevel(original_level)
-            param_file_handler.close()
+            param_handler.close()

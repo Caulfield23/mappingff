@@ -317,7 +317,7 @@ def parameterize(
     Args:
         molPath: Path to target molecule .mol or .pdb file.
         dbPath: Path to the SQLite database file.
-        outPath: Output LAMMPS file path. If None, uses <mol_file>_param.lmp.
+        outPath: Output LAMMPS file path. If None, uses <mol_file>.lmp.
         verbose: If True, print detailed progress.
         total_charge: Target total charge for the system (default: 0).
             Charge will be adjusted evenly across all non-hydrogen atoms.
@@ -355,7 +355,7 @@ def parameterize(
 
     # Determine output path
     if outPath is None:
-        outPath = molPath.with_name(f"{molPath.stem}_param.lmp")
+        outPath = molPath.with_suffix(".lmp")
 
     # Resolve atom types
     atomTypeMap: dict[int, int] = {}  # atomIdx -> lammpsType (resolved from db)

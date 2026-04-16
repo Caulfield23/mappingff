@@ -10,10 +10,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-# Default database directory and file path
+# Default database file path
 # Users can override these via CLI arguments
-USER_DEFAULT_DB_DIR = Path("./database")
-USER_DEFAULT_DB_PATH = USER_DEFAULT_DB_DIR / "db.db"
+USER_DEFAULT_DB_PATH = Path("samples.db")
 
 
 def setupLogging(level: int = logging.INFO) -> None:

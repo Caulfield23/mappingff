@@ -39,10 +39,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mappingff/mappingff"
-Documentation = "https://github.com/mappingff/mappingff#readme"
-Repository = "https://github.com/mappingff/mappingff"
-Issues = "https://github.com/mappingff/mappingff/issues"
+Homepage = "https://github.com/Caulfield23/mappingff"
+Documentation = "https://github.com/Caulfield23/mappingff#readme"
+Repository = "https://github.com/Caulfield23/mappingff"
+Issues = "https://github.com/Caulfield23/mappingff/issues"
 
 [project.scripts]
 mappingff = "mappingff.cli:main"
