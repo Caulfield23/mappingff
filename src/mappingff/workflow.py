@@ -81,8 +81,6 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
         angles = molReader.getAngles()
         dihedrals = molReader.getDihedrals()
         impropers = molReader.getImpropers()
-        coords = molReader.getCoords()
-
         totalAtoms += len(atoms)
         totalBonds += len(bonds)
         totalAngles += len(angles)

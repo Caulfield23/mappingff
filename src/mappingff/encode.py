@@ -163,8 +163,6 @@ def getHop2Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
                 props["parent_idx"] = hop1_idx
                 hop2[idx] = props
 
-    # All bonds within hop2 scope
-    all_atoms_in_scope = hop1_idx_set | hop2_idx_set | {center_idx}
     bonds = []
 
     # center-hop1 bonds
