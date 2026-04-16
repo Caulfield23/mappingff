@@ -1,4 +1,4 @@
-"""Database facade for MacroMapFF parameter database.
+"""Database facade for mappingff parameter database.
 
 This module provides the MacroMapDB class which is a facade for all database
 operations. The database is stored as an SQLite file with the following tables:
@@ -765,65 +765,6 @@ class MacroMapDB:
         if row is None:
             return None
         return {"coeffs": json.loads(row["coeffs"])}
-
-    # ── Merge and export operations ────────────────────────────────────────────
-
-    def mergeSample(self, sampleData: dict) -> None:
-        """Merge data from a sample into the database.
-
-        This is used during add-samples to incrementally update the database
-        with new samples without rebuilding from scratch.
-
-        Args:
-            sampleData: Dictionary containing atom_types, hop1_keymap, hop0_keymap,
-                       and other parameter tables to merge.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not loaded")
-
-        for hop3Key, info in sampleData.get("atom_types", {}).items():
-            existing = self.getAtomType(hop3Key)
-            if existing is not None:
-                merged_sources = list(set(existing["source"]) | set(info["source"]))
-                self.insertAtomType(hop3Key, {**info, "source": merged_sources})
-            else:
-                self.insertAtomType(hop3Key, info)
-
-        for hop1Key, entry in sampleData.get("hop1_keymap", {}).items():
-            cursor = self._conn.cursor()
-            cursor.execute("SELECT lammps_types FROM hop1_keymap WHERE hop1_key = ?", (hop1Key,))
-            row = cursor.fetchone()
-            if row is not None:
-                existing_types = set(json.loads(row["lammps_types"]))
-                new_types = set(entry["lammps_types"])
-                merged_types = sorted(existing_types | new_types)
-                cursor.execute("""
-                    UPDATE hop1_keymap SET lammps_types = ? WHERE hop1_key = ?
-                """, (json.dumps(merged_types), hop1Key))
-            else:
-                cursor.execute("""
-                    INSERT INTO hop1_keymap (hop1_key, hop0_key, lammps_types)
-                    VALUES (?, ?, ?)
-                """, (hop1Key, entry["hop0_key"], json.dumps(entry["lammps_types"])))
-
-        for hop0Key, entry in sampleData.get("hop0_keymap", {}).items():
-            cursor = self._conn.cursor()
-            cursor.execute("SELECT lammps_types FROM hop0_keymap WHERE hop0_key = ?", (hop0Key,))
-            row = cursor.fetchone()
-            if row is not None:
-                existing_types = set(json.loads(row["lammps_types"]))
-                new_types = set(entry["lammps_types"])
-                merged_types = sorted(existing_types | new_types)
-                cursor.execute("""
-                    UPDATE hop0_keymap SET lammps_types = ? WHERE hop0_key = ?
-                """, (json.dumps(merged_types), hop0Key))
-            else:
-                cursor.execute("""
-                    INSERT INTO hop0_keymap (hop0_key, lammps_types)
-                    VALUES (?, ?)
-                """, (hop0Key, json.dumps(entry["lammps_types"])))
-
-        self._conn.commit()
 
     def getMeta(self, key: str) -> str | None:
         """Get a meta value by key.

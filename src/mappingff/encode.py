@@ -1,4 +1,4 @@
-"""Environment key encoding for MacroMapFF.
+"""Environment key encoding for mappingff.
 
 This module provides functions for computing multi-level chemical environment
 descriptors (hop0, hop1, hop2) and encoding them as SHA-256 keys.

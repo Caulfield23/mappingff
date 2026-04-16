@@ -1,24 +1,23 @@
-"""CLI entry point for MacroMapFF.
+"""Core workflow functions for mappingff.
 
-Provides three commands:
-    - build-db: Build parameter database from sample molecules
-    - add-samples: Add new samples to existing database
-    - parameterize: Generate parameterized LAMMPS files for target molecules
+This module provides the main workflow functions:
+    - buildDb: Build parameter database from sample molecules
+    - parameterize: Parameterize target molecule and generate LAMMPS file
+
+These functions can be imported and used programmatically, or via the CLI.
 """
 
 from __future__ import annotations
 
-import argparse
 import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
-from macromapff.db import MacroMapDB
-from macromapff.encode import getHop2Subgraph, getHop3Subgraph
-from macromapff.lmp import parseLammps
-from macromapff.mol import MolReader, computeHopKeys
-from macromapff.utils import USER_DEFAULT_DB_PATH, setupLogging
+from mappingff.db import MacroMapDB
+from mappingff.encode import getHop2Subgraph
+from mappingff.fallback import resolveAtomType
+from mappingff.lmp import LammpsData, adjustTotalCharge, generateLammps, parseLammps
+from mappingff.mol import MolReader, computeHopKeys
 
 
 def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
@@ -347,6 +346,9 @@ def parameterize(
     molReader = MolReader(molPath)
     atoms = molReader.getAtoms()
     bonds = molReader.getBonds()
+    angles = molReader.getAngles()
+    dihedrals = molReader.getDihedrals()
+    impropers = molReader.getImpropers()
     coords = molReader.getCoords()
 
     log.info(f"Target molecule: {molPath.name}")
@@ -358,8 +360,6 @@ def parameterize(
         outPath = molPath.with_name(f"{molPath.stem}_param.lmp")
 
     # Resolve atom types
-    from macromapff.fallback import resolveAtomType
-
     atomTypeMap: dict[int, int] = {}  # atomIdx -> lammpsType (resolved from db)
     atomHop0Key: dict[int, str] = {}  # atomIdx -> hop0Key (resolved from db)
     atomHop3Key: dict[int, str] = {}  # atomIdx -> hop3Key (for typeInfo lookup)
@@ -441,16 +441,15 @@ def parameterize(
         if bondTypeId is None:
             bondTypeId = nextBondTypeId
             nextBondTypeId += 1
-            bondTypeParams[bondTypeId] = (paramKey[0], paramKey[1])
+            bondTypeParams[bondTypeId] = paramKey
 
         bondParamMap[bondIdx] = bondParam
         bondTypeMap[bondIdx] = bondTypeId
 
     # Look up angle parameters
-    angles = molReader.getAngles()
-    angleParamMap: dict[int, dict] = {}
-    angleTypeMap: dict[int, int] = {}
-    angleTypeParams: dict[int, tuple] = {}
+    angleParamMap: dict[int, dict] = {}  # angleIdx -> {k, theta0}
+    angleTypeMap: dict[int, int] = {}   # angleIdx -> newAngleTypeId
+    angleTypeParams: dict[int, tuple] = {}  # newAngleTypeId -> (k, theta0)
     nextAngleTypeId = 1
     angleNoMatch = 0
     angleNoMatchAtoms: list[tuple[int, int, int]] = []
@@ -478,24 +477,23 @@ def parameterize(
         # Create angle type if not seen
         paramKey = (angleParam["k"], angleParam["theta0"])
         angleTypeId = None
-        for atid, (ak, atheta) in angleTypeParams.items():
-            if abs(ak - paramKey[0]) < 0.01 and abs(atheta - paramKey[1]) < 0.1:
+        for atid, (ak, ath) in angleTypeParams.items():
+            if abs(ak - paramKey[0]) < 0.01 and abs(ath - paramKey[1]) < 0.1:
                 angleTypeId = atid
                 break
 
         if angleTypeId is None:
             angleTypeId = nextAngleTypeId
             nextAngleTypeId += 1
-            angleTypeParams[angleTypeId] = (paramKey[0], paramKey[1])
+            angleTypeParams[angleTypeId] = paramKey
 
         angleParamMap[angleIdx] = angleParam
         angleTypeMap[angleIdx] = angleTypeId
 
     # Look up dihedral parameters
-    dihedrals = molReader.getDihedrals()
-    dihedralParamMap: dict[int, dict] = {}
-    dihedralTypeMap: dict[int, int] = {}
-    dihedralTypeParams: dict[int, tuple] = {}
+    dihedralParamMap: dict[int, dict] = {}  # dihIdx -> {coeffs}
+    dihedralTypeMap: dict[int, int] = {}   # dihIdx -> newDihTypeId
+    dihedralTypeParams: dict[int, tuple] = {}  # newDihTypeId -> coeffs tuple
     nextDihedralTypeId = 1
     dihedralNoMatch = 0
     dihedralNoMatchAtoms: list[tuple[int, int, int, int]] = []
@@ -541,10 +539,9 @@ def parameterize(
         dihedralTypeMap[dihIdx] = dihedralTypeId
 
     # Look up improper parameters
-    impropers = molReader.getImpropers()
-    improperParamMap: dict[int, dict] = {}
-    improperTypeMap: dict[int, int] = {}
-    improperTypeParams: dict[int, tuple] = {}
+    improperParamMap: dict[int, dict] = {}  # impIdx -> {coeffs}
+    improperTypeMap: dict[int, int] = {}   # impIdx -> newImpTypeId
+    improperTypeParams: dict[int, tuple] = {}  # newImpTypeId -> coeffs tuple
     nextImproperTypeId = 1
     improperNoMatch = 0
     improperNoMatchAtoms: list[tuple[int, int, int, int]] = []
@@ -657,23 +654,10 @@ def parameterize(
                     "charge": info["charge"],
                     "lammps_type": lammpsType,  # Track original for debugging
                 }
-            else:
-                # No match found - set all parameters to 0 and report error
-                log.error(f"  Atom {atomIdx} ({element}): no database match, setting all params to 0")
-                typeInfo[outputType] = {
-                    "element": element,
-                    "mass": 0.0,
-                    "sigma": 0.0,
-                    "epsilon": 0.0,
-                    "charge": 0.0,
-                    "lammps_type": lammpsType,
-                }
 
     # Build LammpsData object
-    from macromapff.lmp import LammpsData
-
     lmpData = LammpsData()
-    lmpData.header_comment = "LAMMPS data file Generated by MacroMapFF"
+    lmpData.header_comment = "LAMMPS data file Generated by mappingff"
     lmpData.atoms = len(atoms)
     lmpData.bonds = len(bondParamMap)
     lmpData.angles = len(angleParamMap)
@@ -772,18 +756,16 @@ def parameterize(
             lmpData.improper_records.append((impIdx, it, a1, a2, a3, a4))
 
     # Adjust total charge if needed (non-hydrogen atoms only)
-    from macromapff.lmp import adjustTotalCharge
     before_charge = sum(atom[3] for atom in lmpData.atom_records)
-    if total_charge is not None:
+    if total_charge != 0.0:
         adjustTotalCharge(lmpData, total_charge)
     after_charge = sum(atom[3] for atom in lmpData.atom_records)
-    if total_charge is not None:
+    if total_charge != 0.0:
         log.info(f"Total charge: {after_charge:.6f} (adjusted from {before_charge:.6f}, target: {total_charge})")
     else:
         log.info(f"Total charge: {after_charge:.6f}")
 
     # Write LAMMPS file
-    from macromapff.lmp import generateLammps
     generateLammps(lmpData, outPath)
     log.info(f"Output written to {outPath}")
 
@@ -800,117 +782,3 @@ def parameterize(
         "hop0_matches": hop0Matches,
         "no_match": noMatch,
     }
-
-
-def main() -> None:
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="MacroMapFF - Molecular force field parameterization",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    # build-db command
-    build_parser = sub.add_parser("build-db", help="Build parameter database from samples")
-    build_parser.add_argument(
-        "samples_dir",
-        type=Path,
-        help="Directory containing sample subdirectories with .mol and .lmp files",
-    )
-    build_parser.add_argument(
-        "--db-dir",
-        type=Path,
-        default=USER_DEFAULT_DB_PATH.parent,
-        help="Output directory for database file (default: ./database)",
-    )
-    build_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Print detailed progress",
-    )
-
-    # add-samples command
-    add_parser = sub.add_parser("add-samples", help="Add new samples to existing database")
-    add_parser.add_argument(
-        "samples_dir",
-        type=Path,
-        help="Directory containing sample subdirectories",
-    )
-    add_parser.add_argument(
-        "--db-path",
-        type=Path,
-        default=USER_DEFAULT_DB_PATH,
-        help="Path to existing database file (default: ./database/db.pkl)",
-    )
-    add_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Print detailed progress",
-    )
-
-    # parameterize command
-    param_parser = sub.add_parser("parameterize", help="Parameterize target molecule")
-    param_parser.add_argument(
-        "mol_file",
-        type=Path,
-        help="Path to target molecule .mol or .pdb file",
-    )
-    param_parser.add_argument(
-        "--out",
-        type=Path,
-        help="Output LAMMPS file path (default: <mol_file>_param.lmp)",
-    )
-    param_parser.add_argument(
-        "--db-path",
-        type=Path,
-        default=USER_DEFAULT_DB_PATH,
-        help="Path to database file (default: ./database/db.pkl)",
-    )
-    param_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Print detailed progress",
-    )
-    param_parser.add_argument(
-        "-c", "--charge",
-        type=float,
-        default=0.0,
-        help="Target total charge for the system (default: 0)",
-    )
-
-    args = parser.parse_args()
-
-    # Setup logging
-    logLevel = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
-    setupLogging(logLevel)
-
-    if args.command == "build-db":
-        dbPath = args.db_dir / "db.pkl"
-        result = buildDb(args.samples_dir, dbPath, args.verbose)
-        print(f"Build complete: {result['samples_count']} samples, {result['atoms_processed']} atoms")
-
-    elif args.command == "add-samples":
-        print("add-samples not yet implemented")
-
-    elif args.command == "parameterize":
-        result = parameterize(
-            args.mol_file,
-            args.db_path,
-            args.out,
-            args.verbose,
-            args.charge,
-        )
-        print(f"Parameterize complete: {result['atoms']} atoms, "
-              f"{result['bonds']} bonds, "
-              f"{result['angles']} angles, "
-              f"{result['dihedrals']} dihedrals, "
-              f"{result['impropers']} impropers, "
-              f"{result['unique_types']} types, "
-              f"hop2={result['hop2_matches']}, "
-              f"hop1={result['hop1_matches']}, "
-              f"hop0={result['hop0_matches']}, "
-              f"no_match={result['no_match']}")
-
-
-if __name__ == "__main__":
-    main()

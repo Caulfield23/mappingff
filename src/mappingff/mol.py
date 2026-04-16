@@ -20,7 +20,7 @@ from pathlib import Path
 from rdkit import Chem
 from rdkit.Chem import rdchem, SanitizeMol, rdDetermineBonds
 
-from macromapff import encode
+from mappingff import encode
 
 
 class MolReader:

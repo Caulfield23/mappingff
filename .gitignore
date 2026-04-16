@@ -1,31 +1,31 @@
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
 .pytest_cache/
-.ruff_cache/
-.mypy_cache/
+*.pyc
 
 # Virtual environments
 .venv/
 venv/
-env/
 
-# Large/generated outputs
-outputs/
-tests/artifacts/
-*.sqlite
+# Build artifacts
+build/
+dist/
+
+# Test outputs
+tests/standard/workflow_output/
+*.db
+
+# Logs
 *.log
 
-# Editors / OS
-.vscode/
-.idea/
-.DS_Store
+# Legacy
+legacy/
 
-# Localized Chinese docs (kept locally)
+# Docs
+docs/
+
+# Not published
 README_zh.md
-docs/DEVELOPER_GUIDE_zh.md
-
-# Agent prompts
-AGENTS.md
