@@ -19,7 +19,6 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rdkit import Chem
     from rdkit.Chem import rdchem
 
 

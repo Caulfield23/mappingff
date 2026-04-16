@@ -44,19 +44,19 @@ samples/
 Build the database:
 
 ```bash
-mappingff build-db samples/ --db-dir ./database
+mappingff build-db samples/ -d ./database/db.db
 ```
 
 ### 2. Parameterize a target molecule
 
 ```bash
-mappingff parameterize target.mol --db-path ./database/db.pkl --out target_param.lmp
+mappingff parameterize target.mol -d ./database/db.db --out target_param.lmp
 ```
 
 Or with charge adjustment:
 
 ```bash
-mappingff parameterize target.mol --db-path ./database/db.pkl -c 0.0
+mappingff parameterize target.mol -d ./database/db.db -c 0.0
 ```
 
 ## CLI Commands
@@ -69,8 +69,8 @@ Build a parameter database from sample molecules.
 mappingff build-db <samples_dir> [options]
 
 Options:
-  --db-dir PATH       Output directory for database (default: ./database)
-  -v, --verbose       Print detailed progress
+  -d, --db PATH        Output database file path (default: ./database/db.db)
+  -v, --verbose        Print detailed progress
 ```
 
 ### `parameterize`
@@ -81,8 +81,8 @@ Parameterize a target molecule and generate LAMMPS file.
 mappingff parameterize <mol_file> [options]
 
 Options:
-  --db-path PATH       Path to database file (default: ./database/db.pkl)
-  --out PATH           Output LAMMPS file (default: <mol_file>_param.lmp)
+  -d, --db PATH        Path to database file (default: ./database/db.db)
+  -o, --out PATH       Output LAMMPS file (default: <mol_file>_param.lmp)
   -c, --charge FLOAT  Target total charge (default: 0)
   -v, --verbose        Print detailed progress
 ```
@@ -138,17 +138,17 @@ from mappingff import buildDb, parameterize
 
 # Build database
 result = buildDb(
-    samplesDir="./samples",
-    dbPath="./database/db.pkl",
+    samplesDir=Path("samples"),
+    dbPath=Path("database/db"),
     verbose=True
 )
 print(f"Built database with {result['atoms_processed']} atoms")
 
 # Parameterize molecule
 result = parameterize(
-    molPath="./target.mol",
-    dbPath="./database/db.pkl",
-    outPath="./target_param.lmp",
+    molPath=Path("target.mol"),
+    dbPath=Path("database/db"),
+    outPath=Path("target_param.lmp"),
     total_charge=0.0,
     verbose=True
 )

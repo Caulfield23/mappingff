@@ -33,7 +33,7 @@ def main() -> None:
         "-d", "--db",
         type=Path,
         default=USER_DEFAULT_DB_PATH,
-        help="Output database file path (default: ./database/db)",
+        help="Output database file path (default: ./database/db.db)",
     )
     build_parser.add_argument(
         "-v", "--verbose",
@@ -57,7 +57,7 @@ def main() -> None:
         "-d", "--db",
         type=Path,
         default=USER_DEFAULT_DB_PATH,
-        help="Path to database file (default: ./database/db)",
+        help="Path to database file (default: ./database/db.db)",
     )
     param_parser.add_argument(
         "-v", "--verbose",

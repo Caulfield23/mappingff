@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rdkit import Chem
-from rdkit.Chem import rdchem, SanitizeMol, rdDetermineBonds
+from rdkit.Chem import SanitizeMol, rdchem, rdDetermineBonds
 
 from mappingff import encode
 

@@ -11,7 +11,6 @@ import pytest
 
 from mappingff.workflow import buildDb, parameterize
 
-
 # Base path for test fixtures
 FIXTURES = Path(__file__).parent / "standard"
 SEG_DATA = FIXTURES / "segdata"
