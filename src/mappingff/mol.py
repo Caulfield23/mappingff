@@ -55,9 +55,24 @@ class MolReader:
         Sanitization is performed after parsing to ensure implicit valence
         and other computed properties are available.
         """
+        text = self._path.read_text(encoding="utf-8")
+        # Remove OBJ3D blocks which newer RDKit versions reject
+        lines = text.splitlines()
+        skip = False
+        filtered_lines = []
+        for line in lines:
+            if "M  V30 BEGIN OBJ3D" in line:
+                skip = True
+                continue
+            if "M  V30 END OBJ3D" in line:
+                skip = False
+                continue
+            if not skip:
+                filtered_lines.append(line)
+        text = "\n".join(filtered_lines)
         suffix = self._path.suffix.lower()
         if suffix == ".mol":
-            self._mol = Chem.MolFromMolFile(str(self._path), sanitize=False)
+            self._mol = Chem.MolFromMolBlock(text, sanitize=False)
         elif suffix == ".pdb":
             self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
             if self._mol is not None:
