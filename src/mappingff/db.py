@@ -2,7 +2,7 @@
 
 This module provides the MacroMapDB class which is a facade for all database
 operations. The database is stored as an SQLite file with the following tables:
-    - atom_types: hop2-level atom type definitions
+    - atom_types: hop3-level atom type definitions
     - hop1_keymap: hop1-level fallback mappings
     - hop0_keymap: hop0-level fallback mappings
     - bond_params: bond parameter definitions
@@ -205,7 +205,8 @@ class MacroMapDB:
                 hop2_key TEXT,
                 hop1_key TEXT,
                 hop0_key TEXT,
-                hop2_graph TEXT
+                hop0_graph TEXT,
+                hop3_graph TEXT
             )
         """)
 
@@ -295,7 +296,7 @@ class MacroMapDB:
         Args:
             hop3Key: SHA-256 key computed from hop3 environment (finest level).
             info: Dictionary containing element, hop1_key, hop0_key, hop2_key,
-                  hop2_graph, mass, sigma, epsilon, source.
+                  hop0_graph, hop3_graph, mass, sigma, epsilon, source.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -334,8 +335,8 @@ class MacroMapDB:
                 INSERT INTO atom_types
                 (hop3_key, hop2_key, element, hop1_key, hop0_key, lammps_type,
                  mass, sigma, epsilon, sigma_list, epsilon_list,
-                 charge, charge_list, source, hop2_graph)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 charge, charge_list, source, hop0_graph, hop3_graph)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 hop3Key,
                 info.get("hop2_key"),
@@ -351,7 +352,8 @@ class MacroMapDB:
                 round(info.get("charge", 0.0), 6),
                 json.dumps([round(info.get("charge", 0.0), 6)]),
                 json.dumps(info["source"]),
-                json.dumps(info.get("hop2_graph", {})),
+                json.dumps(info.get("hop0_graph", {})),
+                json.dumps(info.get("hop3_graph", {})),
             ))
 
     def getAtomType(self, hop3Key: str) -> dict | None:
@@ -386,7 +388,8 @@ class MacroMapDB:
             "epsilon_list": json.loads(row["epsilon_list"]),
             "charge_list": json.loads(row["charge_list"]),
             "source": json.loads(row["source"]),
-            "hop2_env": json.loads(row["hop2_graph"]) if row["hop2_graph"] else {},
+            "hop3_env": json.loads(row["hop3_graph"]) if row["hop3_graph"] else {},
+            "hop0_env": json.loads(row["hop0_graph"]) if row["hop0_graph"] else {},
         }
 
     # ── hop1_keymap operations ─────────────────────────────────────────────────

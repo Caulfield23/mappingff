@@ -37,13 +37,13 @@ Prepare a directory structure with sample molecules(`.mol` or `.pdb`):
 workdir/
 ├── samples/
 │   ├── segment1/
-│   │   ├── segment1.mol       # Molecular structure (recommended)
+│   │   ├── segment1.mol       # Molecular structure
 │   │   └── segment1.lmp      # Reference LAMMPS parameters
 │   ├── segment2/
-│   │   ├── segment2.mol      # Molecular structure (recommended)
+│   │   ├── segment2.mol
 │   │   └── segment2.lmp
 │   └── ...
-└── target.mol               # Target molecule to parameterize (recommended)
+└── target.mol               # Target molecule to parameterize
 ```
 
 Build the database:
@@ -63,6 +63,31 @@ Or with charge adjustment:
 ```bash
 mappingff parameterize target.mol -d samples.db -c 0.0
 ```
+
+### Segment Coverage Requirements
+
+Use this section as a preparation checklist before running `build-db`.
+
+**What must be covered**
+Each segment set must cover all chemical environments that appear in the target. In particular, environments at segment junctions must be preserved carefully, because end-capping can alter local connectivity and change the inferred environment.
+
+**Boundary case: a dihedral term**
+To determine bonded terms, the hop0 environment (including neighbor signatures) must be available for all involved atoms. For a dihedral A-B-C-D, matching requires a six-atom local context: X-A-B-C-D-Y.
+- A-B-C-D are the dihedral atoms.
+- X and Y are the outer neighbors of A and D.
+- For X and Y, only the element type and the bond order to A or D are required.
+
+If an original chain `R1-X-A-B-C-D-Y-R2` is split in the middle into `R1-X-A-B-end_capping` and `end_capping-C-D-Y-R2`, the two capped segments must be extended to at least `R1-X-A-B-C-D-Y-end_capping` and `end_capping-A-B-C-D-Y-R2` to cover the original environment with dihedral term `A-B-C-D` (if this dihedral environment is not fully represented inside a single segment).
+
+Under this condition, adjacent segments must share at least three atoms with matching hop0 environments across the junction.
+
+
+**Checklist before database build**
+1. Confirm all unique target environments are present in your segment set.
+2. Extend each boundary to include the dihedral context around the cut.
+3. If a dihedral environment is represented only across a junction, verify that neighboring segments share at least three atoms with matching hop0 environments across that junction.
+
+If these conditions are not met, some atoms or bonded terms can remain unmatched (`no_match`) during parameterization.
 
 ## CLI Commands
 
@@ -100,9 +125,9 @@ mappingff classifies atoms based on their molecular environment. The environment
 
 | Level | Description |
 |-------|-------------|
-| hop0  | Center atom only |
-| hop1  | Center + first neighbors |
-| hop2  | + Second neighbors |
+| hop0  | Center atom + neighbor signatures + bond kinds (coarse-grained) |
+| hop1  | Center + first neighbors (first fallback) |
+| hop2  | + Second neighbors (second fallback) |
 | hop3  | + Third neighbors (finest classification) |
 
 Each environment is canonicalized and hashed to a SHA-256 key, enabling efficient database lookup.
@@ -111,12 +136,16 @@ Each environment is canonicalized and hashed to a SHA-256 key, enabling efficien
 
 When parameterizing a target molecule, mappingff tries to match atoms at progressively more general levels:
 
-1. **hop3 matching** - Based on 3-hop environment
+1. **hop3 matching** - Based on 3-hop environment (finest)
 2. **hop2 fallback** - Based on 2-hop environment
 3. **hop1 fallback** - Based on 1-hop environment
-4. **hop0 fallback** - Based on immediate neighbors only
+4. **hop0 fallback** - Based on center + immediate neighbors
 
 mappingff makes a best-effort attempt to ensure every atom is assigned a parameter at the most specific level possible. Atoms that cannot be matched at any level are logged as `no_match` in the output.
+
+### Bonded Parameters
+
+Bonded parameters (bonds, angles, dihedrals, impropers) are classified using hop0 keys, which include neighbor signatures (`element:bond_type:formal_charge`) and bond kinds for precise matching.
 
 ### Canonical Keys for Bonded Parameters
 

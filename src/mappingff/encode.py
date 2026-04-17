@@ -1,12 +1,13 @@
 """Environment key encoding for mappingff.
 
 This module provides functions for computing multi-level chemical environment
-descriptors (hop0, hop1, hop2) and encoding them as SHA-256 keys.
+descriptors (hop0, hop1, hop2, hop3) and encoding them as SHA-256 keys.
 
-The three levels of environment description:
-    - hop0: Center atom properties + neighbor signatures (coarse-grained)
-    - hop1: hop0 + detailed hop1 shell (first fallback)
-    - hop2: hop1 + detailed hop2 shell (exact match)
+The four levels of environment description:
+    - hop0: Center atom + neighbor signatures + bond kinds (coarse-grained)
+    - hop1: hop0 + first neighbor details (first fallback)
+    - hop2: hop1 + second neighbor details (second fallback)
+    - hop3: hop2 + third neighbor details (finest classification)
 
 Each environment is encoded as a SHA-256 hex string for use as a dictionary key
 in the parameter database.
@@ -57,6 +58,59 @@ def _atomProps(atom: rdchem.Atom) -> dict:
         "h": atom.GetTotalNumHs(includeNeighbors=True),
         "ring": int(atom.IsInRing()),
     }
+
+
+def getHop0Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    """Extract hop0 subgraph centered on an atom.
+
+    The subgraph includes:
+    - center: center atom properties (z, formal_charge, aromatic, hybridization,
+              degree, total_hs, in_ring, ring_count)
+    - neighbor_sig: list of "element:bond_type:formal_charge" for each neighbor
+    - bond_kinds: sorted list of bond types (S, D, A, T) to neighbors
+
+    Args:
+        mol: RDKit molecule.
+        atom: Center atom (RDKit 0-based index).
+
+    Returns:
+        dict with center properties, neighbor_sig, and bond_kinds.
+    """
+    center_idx = atom.GetIdx()
+    ring_info = mol.GetRingInfo()
+
+    # Center properties
+    center_props = {
+        "z": atom.GetAtomicNum(),
+        "formal_charge": atom.GetFormalCharge(),
+        "aromatic": int(atom.GetIsAromatic()),
+        "hybridization": str(atom.GetHybridization()),
+        "degree": atom.GetTotalDegree(),
+        "total_hs": atom.GetTotalNumHs(includeNeighbors=True),
+        "in_ring": int(atom.IsInRing()),
+        "ring_count": ring_info.NumAtomRings(center_idx),
+    }
+
+    # Collect neighbor signatures and bond kinds
+    neighbor_sig = []
+    bond_kinds = []
+    for neighbor in atom.GetNeighbors():
+        n_idx = neighbor.GetIdx()
+        bond = mol.GetBondBetweenAtoms(center_idx, n_idx)
+        bt_code = _bondTypeCode(bond)
+        # Format: "element:bond_type:formal_charge"
+        sig = f"{neighbor.GetAtomicNum()}:{bt_code}:{neighbor.GetFormalCharge()}"
+        neighbor_sig.append(sig)
+        bond_kinds.append(bt_code)
+
+    # Sort for canonical ordering
+    neighbor_sig.sort()
+    bond_kinds.sort()
+
+    center_props["neighbor_sig"] = neighbor_sig
+    center_props["bond_kinds"] = bond_kinds
+
+    return center_props
 
 
 def getHop1Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
@@ -520,6 +574,57 @@ def encodeHop3Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def encodeHop0Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    """Encode hop0 subgraph with neighbor info as SHA-256 hash.
+
+    The hop0 key includes center atom properties plus neighbor signatures
+    and bond kinds, providing a coarse but neighbor-aware classification.
+
+    Args:
+        mol: RDKit molecule.
+        atom: Center atom.
+
+    Returns:
+        64-character SHA-256 hex string.
+    """
+    center_idx = atom.GetIdx()
+    ring_info = mol.GetRingInfo()
+
+    # Center properties
+    center_props = {
+        "z": atom.GetAtomicNum(),
+        "formal_charge": atom.GetFormalCharge(),
+        "aromatic": int(atom.GetIsAromatic()),
+        "hybridization": str(atom.GetHybridization()),
+        "degree": atom.GetTotalDegree(),
+        "total_hs": atom.GetTotalNumHs(includeNeighbors=True),
+        "in_ring": int(atom.IsInRing()),
+        "ring_count": ring_info.NumAtomRings(center_idx),
+    }
+
+    # Collect neighbor signatures and bond kinds
+    neighbor_sig = []
+    bond_kinds = []
+    for neighbor in atom.GetNeighbors():
+        n_idx = neighbor.GetIdx()
+        bond = mol.GetBondBetweenAtoms(center_idx, n_idx)
+        bt_code = _bondTypeCode(bond)
+        # Format: "element:bond_type:formal_charge"
+        sig = f"{neighbor.GetAtomicNum()}:{bt_code}:{neighbor.GetFormalCharge()}"
+        neighbor_sig.append(sig)
+        bond_kinds.append(bt_code)
+
+    # Sort for canonical ordering
+    neighbor_sig.sort()
+    bond_kinds.sort()
+
+    center_props["neighbor_sig"] = neighbor_sig
+    center_props["bond_kinds"] = bond_kinds
+
+    normalized = json.dumps(center_props, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def computeGraphHopKeys(mol: rdchem.Mol, atom: rdchem.Atom) -> tuple[str, str, str, str]:
     """Compute hop3/hop2/hop1/hop0 keys using graph-based encoding.
 
@@ -539,12 +644,7 @@ def computeGraphHopKeys(mol: rdchem.Mol, atom: rdchem.Atom) -> tuple[str, str, s
     # hop1Key uses hop1 subgraph
     hop1_key = encodeHop1Graph(mol, atom)
 
-    # hop0Key uses only center atom properties
-    center_props = _atomProps(atom)
-    ring_info = mol.GetRingInfo()
-    center_props["ring_count"] = ring_info.NumAtomRings(atom.GetIdx())
-    hop0_key = hashlib.sha256(
-        json.dumps(center_props, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    # hop0Key uses center atom + neighbor signatures (enhanced)
+    hop0_key = encodeHop0Graph(mol, atom)
 
     return hop3_key, hop2_key, hop1_key, hop0_key

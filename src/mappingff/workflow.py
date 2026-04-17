@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from mappingff.db import MacroMapDB
-from mappingff.encode import getHop2Subgraph
+from mappingff.encode import getHop0Subgraph, getHop3Subgraph
 from mappingff.fallback import resolveAtomType
 from mappingff.lmp import LammpsData, adjustTotalCharge, generateLammps, parseLammps
 from mappingff.mol import MolReader, computeHopKeys
@@ -95,7 +95,8 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
             atomIdx = atom["idx"]
             hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
             rd_atom = molReader.mol.GetAtomWithIdx(atomIdx - 1)
-            hop2_graph = getHop2Subgraph(molReader.mol, rd_atom)
+            hop0_graph = getHop0Subgraph(molReader.mol, rd_atom)
+            hop3_graph = getHop3Subgraph(molReader.mol, rd_atom)
             atomHop0Key[atomIdx] = hop0Key
 
             # Get LAMMPS type from the sample data
@@ -126,7 +127,8 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
                 "hop2_key": hop2Key,
                 "hop1_key": hop1Key,
                 "hop0_key": hop0Key,
-                "hop2_graph": hop2_graph,
+                "hop0_graph": hop0_graph,
+                "hop3_graph": hop3_graph,
                 "mass": mass[1] if mass else 0.0,
                 "sigma": pairCoeff[2] if pairCoeff else 0.0,
                 "epsilon": pairCoeff[1] if pairCoeff else 0.0,
@@ -285,10 +287,10 @@ def buildDb(samplesDir: Path, dbPath: Path, verbose: bool = False) -> dict:
     log.info(f"Hop2 keymap entries: {len(db.hop2Keymap)}")
     log.info(f"Hop1 keymap entries: {len(db.hop1Keymap)}")
     log.info(f"Hop0 keymap entries: {len(db.hop0Keymap)}")
-    log.info("  Note: hop0 groups by immediate neighbor signatures only (coarse)")
-    log.info("  hop1 adds 2nd-order neighbor details (finer)")
-    log.info("  hop2 adds 3rd-order neighbor details (even finer)")
-    log.info("  hop3 adds 4th-order neighbor details (finest)")
+    log.info("  Note: hop0 groups by center + immediate neighbors (coarse)")
+    log.info("  hop1 adds 1st-order neighbor details (finer)")
+    log.info("  hop2 adds 2nd-order neighbor details (even finer)")
+    log.info("  hop3 adds 3rd-order neighbor details (finest)")
     log.info("Bonded parameter entries:")
     log.info(f"  Bonds: {len(db.bondParams)}")
     log.info(f"  Angles: {len(db.angleParams)}")
