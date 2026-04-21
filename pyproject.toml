@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mappingff"
-version = "1.1.0"
+version = "1.2.0"
 description = "Molecular force field parameterization pipeline for generating LAMMPS data files"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.7"
 license = { text = "MIT" }
 authors = [
   { name = "mappingff contributors" }
@@ -28,7 +28,7 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
-  "rdkit>=2026.03.1",
+  "rdkit>=2022.9.1",
   "numpy>=1.21",
 ]
 

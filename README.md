@@ -8,15 +8,15 @@ Molecular force field parameterization pipeline for generating LAMMPS data files
 - **Hierarchical fallback**: Uses progressively more general environment matching when exact matches aren't available
 - **Bonded parameter support**: Handles bonds, angles, dihedrals, and impropers with symmetric canonical keys
 - **SQLite database**: Efficient storage and lookup of force field parameters
-- **Charge adjustment**: Automatically adjusts total system charge by redistributing to non-hydrogen atoms
+- **Two-step charge adjustment**: Automatically adjusts total system charge using a weighted two-step approach: first redistributes to atoms with multiple charge options, then to sp3 carbons if needed
 - **LAMMPS output**: Generates complete LAMMPS data files ready for simulation
 
 ## Installation
 
 ### Requirements
 
-- Python 3.10+
-- RDKit (`rdkit>=2026.03.1`, via conda-forge)
+- Python 3.7+
+- RDKit (`rdkit>=2022.9.1`, via conda-forge)
 
 ### Installation
 
@@ -113,7 +113,7 @@ mappingff parameterize <mol_file> [options]
 Options:
   -d, --db PATH        Path to database file (default: samples.db)
   -o, --out PATH       Output LAMMPS file (default: <mol_file>.lmp)
-  -c, --charge FLOAT  Target total charge (default: 0)
+  -c, --charge FLOAT  Target total charge for the system (default: no adjustment)
   -v, --verbose        Print detailed progress
 ```
 
@@ -147,6 +147,10 @@ mappingff makes a best-effort attempt to ensure every atom is assigned a paramet
 
 Bonded parameters (bonds, angles, dihedrals, impropers) are classified using hop0 keys, which include neighbor signatures (`element:bond_type:formal_charge`) and bond kinds for precise matching.
 
+### OPLS Improper Filtering
+
+For impropers, mappingff follows OPLS force field conventions: only C or N center atoms with exactly 3 neighbors are considered for improper parameter assignment. This avoids generating spurious improper terms for non-trigonal centers. Other combinations are skipped silently during parameterization.
+
 ### Canonical Keys for Bonded Parameters
 
 Bonded parameters (bonds, angles, dihedrals) use canonical keys that account for molecular symmetry:
@@ -157,11 +161,15 @@ Bonded parameters (bonds, angles, dihedrals) use canonical keys that account for
 
 ### Charge Adjustment
 
-When `--charge` is specified, the system charge is adjusted by distributing the delta evenly across all non-hydrogen atoms:
+When `--charge` is specified, the system charge is adjusted using a two-step weighted approach:
 
-```
-adjustment_per_atom = (target_charge - current_charge) / num_non_hydrogen_atoms
-```
+**Step 1 - Multi-entry types**: Atoms whose atom type has multiple charge options (`charge_list` length > 1) receive charge adjustments weighted by their current absolute charge, bounded by the available range for that type.
+
+**Step 2 - sp3 carbons**: Any remaining charge delta is distributed across qualifying sp3 carbon atoms (C, formal charge = 0, non-aromatic, not adjacent to O/N/P/S/halogens), weighted by absolute charge.
+
+A warning is logged if the Step 2 adjustment per atom exceeds 0.01, indicating significant charge redistribution.
+
+When `--charge` is not specified, no charge adjustment is performed.
 
 ## Programmatic Usage
 

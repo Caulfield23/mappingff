@@ -910,6 +910,7 @@ class MacroMapDB:
                 "sigma": row["sigma"],
                 "epsilon": row["epsilon"],
                 "charge": row["charge"],
+                "charge_list": json.loads(row["charge_list"]),
                 "source": json.loads(row["source"]),
             }
         return result

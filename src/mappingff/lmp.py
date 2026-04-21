@@ -398,30 +398,289 @@ def generateLammps(data: LammpsData, outPath: Path) -> None:
     outPath.write_text("\n".join(lines) + "\n")
 
 
-def adjustTotalCharge(data: LammpsData, targetCharge: float) -> None:
+def _solve_weighted_adjustment(
+    delta: float,
+    indices: list,
+    charges: list,
+    min_bounds: list,
+    max_bounds: list,
+    weights: list,
+) -> list:
+    """Solve weighted charge adjustment with per-atom bounds via iterative fitting.
+
+    Each atom i has current charge q_i, bounds [min_i, max_i], and weight w_i.
+    We want to find adjustment adj_i such that:
+    - sum(adj_i) = delta
+    - min_i - q_i <= adj_i <= max_i - q_i
+
+    Uses iterative approach: distribute delta proportionally by weight,
+    but any atom that hits a bound stops participating and its share
+    is redistributed to remaining atoms.
+
+    Args:
+        delta: Total charge to distribute.
+        indices: Data indices for atoms.
+        charges: Current charges.
+        min_bounds: Per-atom minimum bounds.
+        max_bounds: Per-atom maximum bounds.
+        weights: Per-atom weights (|charge|).
+
+    Returns:
+        List of adjustments per atom.
+    """
+    adjustments = [0.0] * len(indices)
+    remaining_delta = delta
+    active_mask = [True] * len(indices)
+
+    while abs(remaining_delta) > 1e-9 and any(active_mask):
+        # Find active atoms
+        active_indices = [i for i, a in enumerate(active_mask) if a]
+        if not active_indices:
+            break
+
+        # Calculate total weight of active atoms
+        total_weight = sum(weights[i] for i in active_indices)
+        if total_weight < 1e-9:
+            break
+
+        # Distribute remaining delta proportionally
+        overshoot = False
+        for i in active_indices:
+            w = weights[i]
+            proportion = w / total_weight
+            ideal_adj = remaining_delta * proportion
+
+            # Check if this adjustment would exceed bounds
+            max_possible = max_bounds[i] - charges[i]
+            min_possible = min_bounds[i] - charges[i]
+
+            if ideal_adj > max_possible:
+                adjustments[i] = max_possible
+                active_mask[i] = False
+                overshoot = True
+            elif ideal_adj < min_possible:
+                adjustments[i] = min_possible
+                active_mask[i] = False
+                overshoot = True
+            else:
+                adjustments[i] = ideal_adj
+
+        if overshoot:
+            # Recalculate remaining delta after hitting bounds
+            applied = sum(adjustments)
+            remaining_delta = delta - applied
+        else:
+            remaining_delta = 0.0
+            break
+
+    return adjustments
+
+
+def adjustTotalCharge(
+    data: LammpsData,
+    targetCharge: float,
+    db,
+    atoms: list,
+    atomTypeMap: dict,
+    typeInfo: dict,
+) -> None:
     """Adjust atom charges in LammpsData to achieve target total charge.
 
-    Distributes charge delta evenly across all non-hydrogen atoms.
+    Distributes charge delta using a weighted approach:
+    1. First to atoms with charge_list entries > 1 (proportional to |charge|)
+    2. Then to sp3 carbons meeting criteria if residual remains
+    3. Warns if sp3 carbon adjustment exceeds 0.01 per atom
 
     Args:
         data: LammpsData object to modify in-place.
-        targetCharge: Desired total charge for the system.
+        targetCharge: Desired total charge for the system. If None, no adjustment.
+        db: MacroMapDB with atomTypes information.
+        atoms: List of atom dicts from molReader.getAtoms().
+        atomTypeMap: Dict mapping atomIdx -> lammpsType (from db).
+        typeInfo: Dict mapping outputType -> {charge, element, lammps_type, ...}.
+
+    Returns:
+        Tuple of (charge_after_step1, charge_after_step2). If targetCharge is None,
+        returns (current_charge, current_charge).
     """
+    import logging
+
+    log = logging.getLogger("adjustTotalCharge")
+
     # Calculate current total charge
     current_charge = sum(atom[3] for atom in data.atom_records)
 
-    # Get all non-hydrogen atom indices (type_id != 1 is non-H)
-    non_h_indices = [i for i, atom in enumerate(data.atom_records) if atom[2] != 1]
+    # No adjustment if targetCharge is None
+    if targetCharge is None:
+        return current_charge, current_charge
 
-    if not non_h_indices:
-        return
-
-    # Calculate adjustment per atom
     delta = targetCharge - current_charge
-    adjustment = delta / len(non_h_indices)
 
-    # Modify charges for non-hydrogen atoms
-    for i in non_h_indices:
-        atom = list(data.atom_records[i])
-        atom[3] += adjustment
-        data.atom_records[i] = tuple(atom)
+    if abs(delta) < 1e-9:
+        return current_charge, current_charge
+
+    # Get all non-hydrogen data indices
+    non_h_data_indices = [
+        i for i, atom in enumerate(data.atom_records) if atom[2] != 1
+    ]
+
+    if not non_h_data_indices:
+        return current_charge, current_charge
+
+    # ── Step 1: Atoms with charge_list > 1 ──────────────────────────────────
+    # Build lookup: (element, lammps_type) -> charge_list
+    element_lammps_to_chargelist = {}
+    for hop3_key, entry in db.atomTypes.items():
+        element = entry["element"]
+        lammps_type = entry["lammps_type"]
+        charge_list = entry.get("charge_list", [])
+        if len(charge_list) > 1:
+            element_lammps_to_chargelist[(element, lammps_type)] = charge_list
+
+    # Build outputType -> lammps_type mapping from typeInfo
+    output_to_lammps = {
+        ot: info["lammps_type"]
+        for ot, info in typeInfo.items()
+    }
+
+    multi_entry_data = []  # list of (data_idx, current_q, min_q, max_q, weight)
+
+    for data_idx in non_h_data_indices:
+        atom_rec = data.atom_records[data_idx]
+        output_type = atom_rec[2]
+        current_q = atom_rec[3]
+
+        if output_type not in typeInfo:
+            continue
+
+        lammps_type = output_to_lammps.get(output_type)
+        element = typeInfo[output_type]["element"]
+        key = (element, lammps_type)
+
+        if key not in element_lammps_to_chargelist:
+            continue
+
+        charge_list = element_lammps_to_chargelist[key]
+        min_q = min(charge_list)
+        max_q = max(charge_list)
+        weight = abs(current_q) if abs(current_q) > 1e-9 else 0.0
+        if weight < 1e-9:
+            continue
+
+        multi_entry_data.append((data_idx, current_q, min_q, max_q, weight))
+
+    if multi_entry_data:
+        indices = [d[0] for d in multi_entry_data]
+        charges = [d[1] for d in multi_entry_data]
+        min_bounds = [d[2] for d in multi_entry_data]
+        max_bounds = [d[3] for d in multi_entry_data]
+        weights = [d[4] for d in multi_entry_data]
+
+        adjustments = _solve_weighted_adjustment(
+            delta, indices, charges, min_bounds, max_bounds, weights
+        )
+
+        for i, data_idx in enumerate(indices):
+            new_q = charges[i] + adjustments[i]
+            atom = list(data.atom_records[data_idx])
+            atom[3] = new_q
+            data.atom_records[data_idx] = tuple(atom)
+
+        # Recalculate delta after step 1
+        charge_after_step1 = sum(atom[3] for atom in data.atom_records)
+        delta = targetCharge - charge_after_step1
+    else:
+        charge_after_step1 = sum(atom[3] for atom in data.atom_records)
+
+    # Initialize step2 charge as step1 charge
+    charge_after_step2 = charge_after_step1
+
+    # ── Step 2: sp3 carbons for residual ─────────────────────────────────────
+    if abs(delta) > 1e-9:
+        # Electronegative elements that disqualify neighboring sp3 carbons
+        disqualifying_elements = {8, 7, 15, 16, 9, 17, 35, 53}  # O, N, P, S, F, Cl, Br, I
+
+        # Build neighbor info from bonds
+        atom_neighbors = {a["idx"]: [] for a in atoms}
+        for bond in data.bond_records:
+            _, _, a1, a2 = bond[0], bond[1], bond[2], bond[3]
+            if a1 in atom_neighbors and a2 in atom_neighbors:
+                atom_neighbors[a1].append(a2)
+                atom_neighbors[a2].append(a1)
+
+        # Find eligible sp3 carbons
+        sp3_data = []  # list of (data_idx, current_q, weight)
+
+        for data_idx in non_h_data_indices:
+            atom_rec = data.atom_records[data_idx]
+            atom_idx = atom_rec[0]
+            current_q = atom_rec[3]
+
+            # Find corresponding atom info
+            atom_info = None
+            for a in atoms:
+                if a["idx"] == atom_idx:
+                    atom_info = a
+                    break
+
+            if atom_info is None:
+                continue
+
+            # Check sp3 carbon criteria
+            if atom_info["symbol"] != "C":
+                continue
+            if atom_info["formal_charge"] != 0:
+                continue
+            if atom_info["aromatic"] == 1:
+                continue
+            if "SP3" not in str(atom_info["hybridization"]):
+                continue
+
+            # Check neighbors aren't electronegative
+            neighbors = atom_neighbors.get(atom_idx, [])
+            has_disqualifying = False
+            for n_idx in neighbors:
+                for a in atoms:
+                    if a["idx"] == n_idx:
+                        if a["atomic_num"] in disqualifying_elements:
+                            has_disqualifying = True
+                            break
+                if has_disqualifying:
+                    break
+
+            if has_disqualifying:
+                continue
+
+            weight = abs(current_q) if abs(current_q) > 1e-9 else 0.0
+            sp3_data.append((data_idx, current_q, weight))
+
+        if sp3_data:
+            indices = [d[0] for d in sp3_data]
+            charges = [d[1] for d in sp3_data]
+            weights = [d[2] for d in sp3_data]
+
+            total_weight = sum(weights)
+            total_sp3 = len(sp3_data)
+
+            if total_weight > 1e-9:
+                adj_per_atom = delta / total_sp3
+
+                for i, data_idx in enumerate(indices):
+                    weight = weights[i]
+                    proportion = weight / total_weight
+                    adjustment = delta * proportion
+
+                    atom = list(data.atom_records[data_idx])
+                    atom[3] = charges[i] + adjustment
+                    data.atom_records[data_idx] = tuple(atom)
+
+                # Check if adjustment per atom exceeds threshold
+                if abs(adj_per_atom) > 0.01:
+                    log.warning(
+                        f"Charge adjustment per sp3 carbon atom exceeds 0.01: "
+                        f"{abs(adj_per_atom):.4f}"
+                    )
+
+    charge_after_step2 = sum(atom[3] for atom in data.atom_records)
+
+    return charge_after_step1, charge_after_step2

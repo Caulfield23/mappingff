@@ -67,8 +67,8 @@ def main() -> None:
     param_parser.add_argument(
         "-c", "--charge",
         type=float,
-        default=0.0,
-        help="Target total charge for the system (default: 0)",
+        default=None,
+        help="Target total charge for the system (default: no adjustment)",
     )
 
     args = parser.parse_args()

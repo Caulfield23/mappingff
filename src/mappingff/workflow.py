@@ -546,10 +546,23 @@ def parameterize(
     improperNoMatch = 0
     improperNoMatchAtoms: list[tuple[int, int, int, int]] = []
 
+    # Build atom info and coordination index for OPLS improper filtering
+    atom_info_by_idx = {a["idx"]: a for a in atoms}
+    coord_by_atom_idx = {a["idx"]: a["degree"] for a in atoms}
+
     for improper in impropers:
         impIdx = improper["idx"]
         a1 = improper["a1"]
         a2 = improper["a2"]
+
+        # OPLS improper filter: center atom must be C or N with exactly 3 neighbors
+        center_atom = atom_info_by_idx.get(a1)
+        if center_atom is None:
+            continue
+        if center_atom["symbol"] not in ("C", "N"):
+            continue
+        if coord_by_atom_idx.get(a1, 0) != 3:
+            continue
         a3 = improper["a3"]
         a4 = improper["a4"]
         hop0KeyA = atomHop0Key.get(a1)
@@ -755,15 +768,19 @@ def parameterize(
             a4 = improper["a4"]
             lmpData.improper_records.append((impIdx, it, a1, a2, a3, a4))
 
-    # Adjust total charge if needed (non-hydrogen atoms only)
+    # Adjust total charge if needed
     before_charge = sum(atom[3] for atom in lmpData.atom_records)
-    if total_charge != 0.0:
-        adjustTotalCharge(lmpData, total_charge)
-    after_charge = sum(atom[3] for atom in lmpData.atom_records)
-    if total_charge != 0.0:
-        log.info(f"Total charge: {after_charge:.6f} (adjusted from {before_charge:.6f}, target: {total_charge})")
+    if total_charge is not None:
+        after_step1_charge, after_step2_charge = adjustTotalCharge(
+            lmpData, total_charge, db, atoms, atomTypeMap, typeInfo
+        )
+        log.info(f"Total charge: {after_step2_charge:.6f} "
+                 f"(before: {before_charge:.6f}, "
+                 f"after step1: {after_step1_charge:.6f}, "
+                 f"after step2: {after_step2_charge:.6f}, "
+                 f"target: {total_charge})")
     else:
-        log.info(f"Total charge: {after_charge:.6f}")
+        log.info(f"Total charge: {before_charge:.6f} (no adjustment requested)")
 
     # Write LAMMPS file
     generateLammps(lmpData, outPath)

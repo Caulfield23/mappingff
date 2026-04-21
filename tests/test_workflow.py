@@ -86,7 +86,7 @@ class TestStandardWorkflow:
             assert "3486 bonds" in content
             assert "6245 angles" in content
             assert "9652 dihedrals" in content
-            assert "2620 impropers" in content
+            assert "1014 impropers" in content
 
             # Check type counts
             assert "37 atom types" in content
