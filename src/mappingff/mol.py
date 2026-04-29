@@ -76,8 +76,13 @@ class MolReader:
         elif suffix == ".pdb":
             self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
             if self._mol is not None:
-                # Infer bond orders from geometry for PDB files
                 rdDetermineBonds.DetermineBondOrders(self._mol, charge=0)
+        elif suffix == ".lmp":
+            from mappingff.lmp import parseLammps
+            from mappingff.lmp2rdkitmol import lmpToRdkitMol
+
+            lmpData = parseLammps(self._path)
+            self._mol = lmpToRdkitMol(lmpData)
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
 

@@ -1,8 +1,24 @@
-2026-04-29 17:37:43,256 [INFO] build-db: Processing segment1: segment1.pdb + segment1.lmp
-2026-04-29 17:37:43,663 [INFO] build-db:   segment1: 102 atoms, 106 bonds, 202 angles, 274 dihedrals, 122 impropers
-2026-04-29 17:37:43,663 [INFO] build-db: Processing segment2: segment2.pdb + segment2.lmp
-2026-04-29 17:37:43,861 [INFO] build-db:   segment2: 71 atoms, 73 bonds, 130 angles, 191 dihedrals, 67 impropers
-2026-04-29 17:37:43,861 [INFO] build-db: Processing segment3: segment3.pdb + segment3.lmp
-2026-04-29 17:37:44,142 [INFO] build-db:   segment3: 65 atoms, 64 bonds, 120 angles, 150 dihedrals, 76 impropers
-2026-04-29 17:37:44,143 [INFO] build-db: Processing segment4: segment4.mol + segment4.lmp
-2026-04-29 17:37:44,352 [INFO] build-db:   segment4: 80 atoms, 83 bonds, 145 angles, 209 dihedrals, 71 impropers
+2026-04-29 22:11:03,292 [INFO] build-db: Processing segment1: segment1.pdb + segment1.lmp
+2026-04-29 22:11:03,586 [INFO] build-db:   segment1: 102 atoms, 106 bonds, 202 angles, 274 dihedrals, 122 impropers
+2026-04-29 22:11:03,586 [INFO] build-db: Processing segment2: segment2.pdb + segment2.lmp
+2026-04-29 22:11:03,708 [INFO] build-db:   segment2: 71 atoms, 73 bonds, 130 angles, 191 dihedrals, 67 impropers
+2026-04-29 22:11:03,708 [INFO] build-db: Processing segment3: segment3.pdb + segment3.lmp
+2026-04-29 22:11:03,930 [INFO] build-db:   segment3: 65 atoms, 64 bonds, 120 angles, 150 dihedrals, 76 impropers
+2026-04-29 22:11:03,930 [INFO] build-db: Processing segment4: segment4.lmp (lmp only)
+2026-04-29 22:11:04,003 [INFO] build-db:   segment4: 80 atoms, 83 bonds, 145 angles, 209 dihedrals, 71 impropers
+2026-04-29 22:11:04,033 [INFO] build-db: Database saved to /home/zhangzhao/zhangzhao/Projects/mappingff/tests/standard/samples.db
+2026-04-29 22:11:04,034 [INFO] build-db: Samples: 4
+2026-04-29 22:11:04,034 [INFO] build-db: Atoms/Bonds processed: 318 atoms, 326 bonds, 597 angles, 824 dihedrals, 336 impropers
+2026-04-29 22:11:04,040 [INFO] build-db: Atom type entries (hop3 level): 193
+2026-04-29 22:11:04,041 [INFO] build-db: Hop2 keymap entries: 144
+2026-04-29 22:11:04,042 [INFO] build-db: Hop1 keymap entries: 78
+2026-04-29 22:11:04,043 [INFO] build-db: Hop0 keymap entries: 44
+2026-04-29 22:11:04,043 [INFO] build-db:   Note: hop0 groups by center + immediate neighbors (coarse)
+2026-04-29 22:11:04,043 [INFO] build-db:   hop1 adds 1st-order neighbor details (finer)
+2026-04-29 22:11:04,043 [INFO] build-db:   hop2 adds 2nd-order neighbor details (even finer)
+2026-04-29 22:11:04,043 [INFO] build-db:   hop3 adds 3rd-order neighbor details (finest)
+2026-04-29 22:11:04,043 [INFO] build-db: Bonded parameter entries:
+2026-04-29 22:11:04,044 [INFO] build-db:   Bonds: 79
+2026-04-29 22:11:04,045 [INFO] build-db:   Angles: 168
+2026-04-29 22:11:04,047 [INFO] build-db:   Dihedrals: 234
+2026-04-29 22:11:04,048 [INFO] build-db:   Impropers: 80

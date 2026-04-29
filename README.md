@@ -10,6 +10,7 @@ Molecular force field parameterization pipeline for generating LAMMPS data files
 - **SQLite database**: Efficient storage and lookup of force field parameters
 - **Two-step charge adjustment**: Automatically adjusts total system charge using a weighted two-step approach: first redistributes to atoms with multiple charge options, then to sp3 carbons if needed
 - **LAMMPS output**: Generates complete LAMMPS data files ready for simulation
+- **Flexible sample input**: Supports both `.mol`/`.pdb` + `.lmp` pairs, as well as standalone `.lmp` files (atom types inferred from mass via built-in element mass table)
 
 ## Installation
 
@@ -31,7 +32,7 @@ pip install -e .
 
 ### 1. Build a parameter database
 
-Prepare a directory structure with sample molecules(`.mol` or `.pdb`):
+Prepare a directory structure with sample molecules. Each sample can be either a `.mol`/`.pdb` + `.lmp` pair, or a standalone `.lmp` file:
 
 ```
 workdir/
@@ -42,9 +43,12 @@ workdir/
 │   ├── segment2/
 │   │   ├── segment2.mol
 │   │   └── segment2.lmp
+│   ├── segment3.lmp          # Standalone LAMMPS file (no mol/pdb)
 │   └── ...
 └── target.mol               # Target molecule to parameterize
 ```
+
+For standalone `.lmp` files, atom element types are inferred from the mass table in `mass.txt` (user-editable). Bond orders are automatically determined from 3D coordinates via RDKit.
 
 Build the database:
 
@@ -215,9 +219,27 @@ The SQLite database contains:
 
 ### Input: Sample Molecules
 
-Each sample directory should contain:
+Each sample can be provided in two ways:
+
+**Paired mode**: A `.mol`/`.pdb` structure file and a `.lmp` reference file in the same subdirectory:
 - **Structure file**: `.mol` (recommended) or `.pdb` (PDB format)
 - **Reference LAMMPS file**: `.lmp` with known parameters
+
+**Standalone mode**: A single `.lmp` file directly under `samples/` (no mol/pdb). Element types are inferred from atomic masses using the built-in mass table (`mass.txt`), and bond orders are automatically determined from 3D coordinates.
+
+### Element Mass Table
+
+The element-to-mass mapping is stored in `mass.txt` (editable):
+
+```
+H 1.008
+C 12.011
+N 14.007
+O 15.999
+...
+```
+
+When using standalone `.lmp` mode, each atom type's mass is matched against this table (with a tolerance of 0.1 by default) to determine the element symbol. Edit `mass.txt` to customize or extend the mapping.
 
 ### Output: LAMMPS Data Files
 
