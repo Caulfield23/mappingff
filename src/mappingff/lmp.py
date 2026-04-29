@@ -595,91 +595,14 @@ def adjustTotalCharge(
     # Initialize step2 charge as step1 charge
     charge_after_step2 = charge_after_step1
 
-    # ── Step 2: sp3 carbons for residual ─────────────────────────────────────
+    # ── Step 2: evenly distribute residual across all atoms ───────────────────
     if abs(delta) > 1e-9:
-        # Electronegative elements that disqualify neighboring sp3 carbons
-        disqualifying_elements = {8, 7, 15, 16, 9, 17, 35, 53}  # O, N, P, S, F, Cl, Br, I
-
-        # Build neighbor info from bonds
-        atom_neighbors = {a["idx"]: [] for a in atoms}
-        for bond in data.bond_records:
-            _, _, a1, a2 = bond[0], bond[1], bond[2], bond[3]
-            if a1 in atom_neighbors and a2 in atom_neighbors:
-                atom_neighbors[a1].append(a2)
-                atom_neighbors[a2].append(a1)
-
-        # Find eligible sp3 carbons
-        sp3_data = []  # list of (data_idx, current_q, weight)
-
-        for data_idx in non_h_data_indices:
-            atom_rec = data.atom_records[data_idx]
-            atom_idx = atom_rec[0]
-            current_q = atom_rec[3]
-
-            # Find corresponding atom info
-            atom_info = None
-            for a in atoms:
-                if a["idx"] == atom_idx:
-                    atom_info = a
-                    break
-
-            if atom_info is None:
-                continue
-
-            # Check sp3 carbon criteria
-            if atom_info["symbol"] != "C":
-                continue
-            if atom_info["formal_charge"] != 0:
-                continue
-            if atom_info["aromatic"] == 1:
-                continue
-            if "SP3" not in str(atom_info["hybridization"]):
-                continue
-
-            # Check neighbors aren't electronegative
-            neighbors = atom_neighbors.get(atom_idx, [])
-            has_disqualifying = False
-            for n_idx in neighbors:
-                for a in atoms:
-                    if a["idx"] == n_idx:
-                        if a["atomic_num"] in disqualifying_elements:
-                            has_disqualifying = True
-                            break
-                if has_disqualifying:
-                    break
-
-            if has_disqualifying:
-                continue
-
-            weight = abs(current_q) if abs(current_q) > 1e-9 else 0.0
-            sp3_data.append((data_idx, current_q, weight))
-
-        if sp3_data:
-            indices = [d[0] for d in sp3_data]
-            charges = [d[1] for d in sp3_data]
-            weights = [d[2] for d in sp3_data]
-
-            total_weight = sum(weights)
-            total_sp3 = len(sp3_data)
-
-            if total_weight > 1e-9:
-                adj_per_atom = delta / total_sp3
-
-                for i, data_idx in enumerate(indices):
-                    weight = weights[i]
-                    proportion = weight / total_weight
-                    adjustment = delta * proportion
-
-                    atom = list(data.atom_records[data_idx])
-                    atom[3] = charges[i] + adjustment
-                    data.atom_records[data_idx] = tuple(atom)
-
-                # Check if adjustment per atom exceeds threshold
-                if abs(adj_per_atom) > 0.01:
-                    log.warning(
-                        f"Charge adjustment per sp3 carbon atom exceeds 0.01: "
-                        f"{abs(adj_per_atom):.4f}"
-                    )
+        adj_per_atom = delta / len(data.atom_records)
+        for i in range(len(data.atom_records)):
+            atom = list(data.atom_records[i])
+            atom[3] += adj_per_atom
+            data.atom_records[i] = tuple(atom)
+        log.info(f"  Step 2 charge adjustment: {adj_per_atom:+.6f} per atom ({len(data.atom_records)} atoms)")
 
     charge_after_step2 = sum(atom[3] for atom in data.atom_records)
 

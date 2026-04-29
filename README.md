@@ -165,9 +165,7 @@ When `--charge` is specified, the system charge is adjusted using a two-step wei
 
 **Step 1 - Multi-entry types**: Atoms whose atom type has multiple charge options (`charge_list` length > 1) receive charge adjustments weighted by their current absolute charge, bounded by the available range for that type.
 
-**Step 2 - sp3 carbons**: Any remaining charge delta is distributed across qualifying sp3 carbon atoms (C, formal charge = 0, non-aromatic, not adjacent to O/N/P/S/halogens), weighted by absolute charge.
-
-A warning is logged if the Step 2 adjustment per atom exceeds 0.01, indicating significant charge redistribution.
+**Step 2 - all atoms**: Any remaining charge delta is distributed evenly across all atoms in the system.
 
 When `--charge` is not specified, no charge adjustment is performed.
 
