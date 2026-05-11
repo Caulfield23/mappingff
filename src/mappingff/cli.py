@@ -10,7 +10,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from mappingff.workflow import buildDb, parameterize
+from mappingff.workflow import build_db, parameterize
 
 
 def main() -> None:
@@ -83,8 +83,8 @@ def main() -> None:
                 logging.FileHandler(Path(args.db).parent / "build-db.log", mode="w"),
             ],
         )
-        dbPath = args.db
-        buildDb(args.samples_dir, dbPath)
+        db_path = args.db
+        build_db(args.samples_dir, db_path)
         print(f"Database build complete!")
 
     elif args.command == "parameterize":

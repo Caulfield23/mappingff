@@ -17,7 +17,7 @@ from __future__ import annotations
 from mappingff.db import MacroMapDB
 
 
-def resolveAtomType(
+def resolve_atom_type(
     hop3Key: str,
     hop2Key: str,
     hop1Key: str,

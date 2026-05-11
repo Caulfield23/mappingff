@@ -3331,5 +3331,5 @@
 [INFO] parameterize:   hop1 matches: 234
 [INFO] parameterize:   hop0 matches: 0
 [INFO] parameterize:   no match: 0
-[INFO] parameterize: Total charge: 1.564505 (no adjustment requested)
+[INFO] parameterize: Total charge: 1.564505
 [INFO] parameterize: Output written to /home/zhangzhao/zhangzhao/Projects/mappingff/tests/standard/target.lmp

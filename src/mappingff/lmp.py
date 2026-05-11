@@ -2,8 +2,8 @@
 
 This module provides:
     - LammpsData: dataclass representing all sections of a LAMMPS data file
-    - parseLammps(path): Parse a LAMMPS data file and return LammpsData
-    - generateLammps(data, outPath): Write LammpsData to a LAMMPS file
+    - parse_lammps(path): Parse a LAMMPS data file and return LammpsData
+    - generate_lammps(data, out_path): Write LammpsData to a LAMMPS file
 
 The LAMMPS data file format consists of:
     - Header: atom/bond/angle/dihedral/improper counts and type counts
@@ -122,7 +122,7 @@ _SECTION_HEADERS = [
 ]
 
 
-def parseLammps(path: Path) -> LammpsData:
+def parse_lammps(path: Path) -> LammpsData:
     """Parse a LAMMPS data file.
 
     Args:
@@ -259,12 +259,12 @@ def parseLammps(path: Path) -> LammpsData:
     return data
 
 
-def generateLammps(data: LammpsData, outPath: Path) -> None:
+def generate_lammps(data: LammpsData, out_path: Path) -> None:
     """Generate a LAMMPS data file from LammpsData.
 
     Args:
         data: LammpsData object containing all sections.
-        outPath: Path to write the output LAMMPS file.
+        out_path: Path to write the output LAMMPS file.
     """
     lines: list[str] = []
 
@@ -380,7 +380,7 @@ def generateLammps(data: LammpsData, outPath: Path) -> None:
         lines.append(f"{imp_id:>10} {imp_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
     lines.append("")
 
-    outPath.write_text("\n".join(lines) + "\n")
+    out_path.write_text("\n".join(lines) + "\n")
 
 
 def _solve_weighted_adjustment(
@@ -461,11 +461,11 @@ def _solve_weighted_adjustment(
     return adjustments
 
 
-def adjustTotalCharge(
+def adjust_total_charge(
     data: LammpsData,
-    targetCharge: float,
+    target_charge: float,
     db: MacroMapDB,
-    atomTypeParams: dict,
+    atom_type_params: dict,
 ) -> tuple[float, float]:
     """Adjust atom charges in LammpsData to achieve target total charge.
 
@@ -475,24 +475,24 @@ def adjustTotalCharge(
 
     Args:
         data: LammpsData object to modify in-place.
-        targetCharge: Desired total charge for the system. If None, no adjustment.
+        target_charge: Desired total charge for the system. If None, no adjustment.
         db: MacroMapDB with atomTypes information.
-        atomTypeParams: Dict mapping db_lammps_type -> {type, element, mass, ...}.
+        atom_type_params: Dict mapping db_lammps_type -> {type, element, mass, ...}.
 
     Returns:
         Tuple of (charge_after_step1, charge_after_step2).
     """
     current_charge = sum(atom[3] for atom in data.atom_records)
 
-    if targetCharge is None:
+    if target_charge is None:
         return current_charge, current_charge
 
-    delta = targetCharge - current_charge
+    delta = target_charge - current_charge
     if abs(delta) < 1e-9:
         return current_charge, current_charge
 
     # Build output_type -> db_lammps_type mapping
-    output_to_db_type = {params["type"]: db_type for db_type, params in atomTypeParams.items()}
+    output_to_db_type = {params["type"]: db_type for db_type, params in atom_type_params.items()}
 
     # Build (element, db_lammps_type) -> charge_list lookup
     element_lammps_to_chargelist = {}
@@ -509,7 +509,7 @@ def adjustTotalCharge(
         if output_type not in output_to_db_type:
             continue
         db_type = output_to_db_type[output_type]
-        element = atomTypeParams[db_type]["element"]
+        element = atom_type_params[db_type]["element"]
         key = (element, db_type)
         if key not in element_lammps_to_chargelist:
             continue
@@ -535,7 +535,7 @@ def adjustTotalCharge(
             data.atom_records[data_idx] = tuple(atom)
 
         charge_after_step1 = sum(atom[3] for atom in data.atom_records)
-        delta = targetCharge - charge_after_step1
+        delta = target_charge - charge_after_step1
 
     # Step 2: evenly distribute residual across all atoms
     charge_after_step2 = charge_after_step1

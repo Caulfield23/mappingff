@@ -21,8 +21,8 @@ from rdkit import Chem
 from rdkit.Chem import SanitizeMol, rdchem, rdDetermineBonds
 
 from mappingff import encode
-from mappingff.lmp import parseLammps
-from mappingff.lmp2rdkitmol import lmpToRdkitMol
+from mappingff.lmp import parse_lammps
+from mappingff.lmp2rdkitmol import lmp_to_rdkit_mol
 
 
 class MolReader:
@@ -87,15 +87,15 @@ class MolReader:
             SanitizeMol(self._mol)
 
         elif suffix == ".lmp":
-            lmpData = parseLammps(self._path)
-            self._mol = lmpToRdkitMol(lmpData)
+            lmpData = parse_lammps(self._path)
+            self._mol = lmp_to_rdkit_mol(lmpData)
 
     @property
     def mol(self) -> rdchem.Mol:
         """Get the RDKit Mol object."""
         return self._mol
 
-    def getAtoms(self) -> list[dict]:
+    def get_atoms(self) -> list[dict]:
         """Get all atoms as a list of dictionaries.
 
         Each dictionary contains properties for one atom including index,
@@ -142,7 +142,7 @@ class MolReader:
             )
         return atoms
 
-    def getBonds(self) -> list[dict]:
+    def get_bonds(self) -> list[dict]:
         """Get all bonds as a list of dictionaries.
 
         Returns:
@@ -166,7 +166,7 @@ class MolReader:
             )
         return bonds
 
-    def getCoords(self) -> dict[int, tuple[float, float, float]]:
+    def get_coords(self) -> dict[int, tuple[float, float, float]]:
         """Get 3D coordinates for all atoms.
 
         Returns:
@@ -179,7 +179,7 @@ class MolReader:
             coords[i + 1] = (pos.x, pos.y, pos.z)
         return coords
 
-    def getAngles(self) -> list[dict]:
+    def get_angles(self) -> list[dict]:
         """Get all valence angles as a list of dictionaries.
 
         An angle is defined by three atoms a1-a2-a3 where a2 is the center.
@@ -216,7 +216,7 @@ class MolReader:
                     angle_idx += 1
         return angles
 
-    def getDihedrals(self) -> list[dict]:
+    def get_dihedrals(self) -> list[dict]:
         """Get all dihedral angles as a list of dictionaries.
 
         A dihedral is defined by four atoms a1-a2-a3-a4 where the bonds
@@ -270,7 +270,7 @@ class MolReader:
                     dih_idx += 1
         return dihedrals
 
-    def getImpropers(self) -> list[dict]:
+    def get_impropers(self) -> list[dict]:
         """Get all improper angles as a list of dictionaries.
 
         An improper is defined by a central atom and three substituents.
@@ -324,7 +324,7 @@ class MolReader:
 # ── Convenience Re-exports from encode.py ──────────────────────────────────────
 
 
-def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, str]:
+def compute_hop_keys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, str]:
     """Compute hop3, hop2, hop1, and hop0 keys for an atom using graph-based encoding.
 
     Args:
@@ -335,4 +335,4 @@ def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, s
         Tuple of (hop3Key, hop2Key, hop1Key, hop0Key), all 64-char hex strings.
     """
     rd_atom = molReader._mol.GetAtomWithIdx(atomIdx - 1)
-    return encode.computeGraphHopKeys(molReader._mol, rd_atom)
+    return encode._computeGraphHopKeys(molReader._mol, rd_atom)

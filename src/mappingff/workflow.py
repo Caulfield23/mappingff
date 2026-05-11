@@ -1,7 +1,7 @@
 """Core workflow functions for mappingff.
 
 This module provides the main workflow functions:
-    - buildDb: Build parameter database from sample molecules
+    - build_db: Build parameter database from sample molecules
     - parameterize: Parameterize target molecule and generate LAMMPS file
 
 These functions can be imported and used programmatically, or via the CLI.
@@ -13,229 +13,229 @@ import logging
 from pathlib import Path
 
 from mappingff.db import MacroMapDB
-from mappingff.encode import getHop0Subgraph, getHop3Subgraph
-from mappingff.fallback import resolveAtomType
-from mappingff.lmp import LammpsData, adjustTotalCharge, generateLammps, parseLammps
-from mappingff.mol import MolReader, computeHopKeys
+from mappingff.encode import get_hop0_subgraph, get_hop3_subgraph
+from mappingff.fallback import resolve_atom_type
+from mappingff.lmp import LammpsData, adjust_total_charge, generate_lammps, parse_lammps
+from mappingff.mol import MolReader, compute_hop_keys
 
 
-def buildDb(samplesDir: Path, dbPath: Path) -> None:
+def build_db(samples_dir: Path, dbPath: Path) -> None:
     """Build a parameter database from sample molecules.
 
-    Iterates over subdirectories in samplesDir, each expected to contain
+    Iterates over subdirectories in samples_dir, each expected to contain
     a .mol (or .pdb) and a .lmp file with the same base name.
 
     Args:
-        samplesDir: Directory containing sample subdirectories.
+        samples_dir: Directory containing sample subdirectories.
         dbPath: Path to output the SQLite database file.
 
     """
     log = logging.getLogger("build-db")
 
     # Find all sample directories
-    sampleDirs = sorted([d for d in samplesDir.iterdir() if d.is_dir()])
+    sample_dirs = sorted([d for d in samples_dir.iterdir() if d.is_dir()])
 
     # Initialize database
     db = MacroMapDB(dbPath)
     db.load()
 
-    totalAtoms = 0
-    totalBonds = 0
-    totalAngles = 0
-    totalDihedrals = 0
-    totalImpropers = 0
+    total_atoms = 0
+    total_bonds = 0
+    total_angles = 0
+    total_dihedrals = 0
+    total_impropers = 0
 
-    # Collect all items to process: (lmpPath, topoPath or None)
+    # Collect all items to process: (lmp_path, topo_path or None)
     items: list[tuple[Path, Path | None]] = []
-    for sampleDir in sampleDirs:
-        topoPath = next(sampleDir.glob("*.mol"), None) or next(
-            sampleDir.glob("*.pdb"), None
+    for sample_dir in sample_dirs:
+        topo_path = next(sample_dir.glob("*.mol"), None) or next(
+            sample_dir.glob("*.pdb"), None
         )
-        lmpPath = next(sampleDir.glob("*.lmp"), None)
-        if topoPath and lmpPath:
-            items.append((lmpPath, topoPath))
-    for lmpPath in samplesDir.glob("*.lmp"):
-        items.append((lmpPath, None))
+        lmp_path = next(sample_dir.glob("*.lmp"), None)
+        if topo_path and lmp_path:
+            items.append((lmp_path, topo_path))
+    for lmp_path in samples_dir.glob("*.lmp"):
+        items.append((lmp_path, None))
 
-    for lmpPath, topoPath in items:
-        segName = lmpPath.stem
+    for lmp_path, topo_path in items:
+        seg_name = lmp_path.stem
 
-        file_part = f" + {topoPath.name}" if topoPath else " (lmp only)"
-        log.info(f"Processing {segName}: {lmpPath.name}{file_part}")
+        file_part = f" + {topo_path.name}" if topo_path else " (lmp only)"
+        log.info(f"Processing {seg_name}: {lmp_path.name}{file_part}")
 
-        lmpData = parseLammps(lmpPath)
-        molReader = MolReader(topoPath if topoPath else lmpPath)
+        lmp_data = parse_lammps(lmp_path)
+        molReader = MolReader(topo_path if topo_path else lmp_path)
 
-        atoms = molReader.getAtoms()
-        bonds = molReader.getBonds()
-        angles = molReader.getAngles()
-        dihedrals = molReader.getDihedrals()
-        impropers = molReader.getImpropers()
-        totalAtoms += len(atoms)
-        totalBonds += len(bonds)
-        totalAngles += len(angles)
-        totalDihedrals += len(dihedrals)
-        totalImpropers += len(impropers)
+        atoms = molReader.get_atoms()
+        bonds = molReader.get_bonds()
+        angles = molReader.get_angles()
+        dihedrals = molReader.get_dihedrals()
+        impropers = molReader.get_impropers()
+        total_atoms += len(atoms)
+        total_bonds += len(bonds)
+        total_angles += len(angles)
+        total_dihedrals += len(dihedrals)
+        total_impropers += len(impropers)
 
         # Build atom_idx -> hop0_key mapping for bonded parameter lookup
-        atomHop0Key: dict[int, str] = {}
+        atom_hop0_key: dict[int, str] = {}
 
         # Process each atom
         for atom in atoms:
-            atomIdx = atom["idx"]
-            hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
-            rd_atom = molReader.mol.GetAtomWithIdx(atomIdx - 1)
-            hop0_graph = getHop0Subgraph(molReader.mol, rd_atom)
-            hop3_graph = getHop3Subgraph(molReader.mol, rd_atom)
-            atomHop0Key[atomIdx] = hop0Key
+            atom_idx = atom["idx"]
+            hop3_key, hop2_key, hop1_key, hop0_key = compute_hop_keys(molReader, atom_idx)
+            rd_atom = molReader.mol.GetAtomWithIdx(atom_idx - 1)
+            hop0_graph = get_hop0_subgraph(molReader.mol, rd_atom)
+            hop3_graph = get_hop3_subgraph(molReader.mol, rd_atom)
+            atom_hop0_key[atom_idx] = hop0_key
 
             # Get LAMMPS type from the sample data
-            atomRecord = next(
-                (rec for rec in lmpData.atom_records if rec[0] == atomIdx),
+            atom_record = next(
+                (rec for rec in lmp_data.atom_records if rec[0] == atom_idx),
                 None,
             )
-            if atomRecord is None:
-                log.warning(f"Atom {atomIdx} not found in LAMMPS data for {segName}")
+            if atom_record is None:
+                log.warning(f"Atom {atom_idx} not found in LAMMPS data for {seg_name}")
                 continue
 
-            # atomRecord format: [atom_id, mol_tag, type_id, charge, x, y, z]
-            lammpsType = atomRecord[2]
+            # atom_record format: [atom_id, mol_tag, type_id, charge, x, y, z]
+            lammps_type = atom_record[2]
 
             # Get pair coeffs for this type
-            pairCoeff = next(
-                (rec for rec in lmpData.pair_coeffs if rec[0] == lammpsType),
+            pair_coeff = next(
+                (rec for rec in lmp_data.pair_coeffs if rec[0] == lammps_type),
                 None,
             )
             mass = next(
-                (rec for rec in lmpData.masses if rec[0] == lammpsType),
+                (rec for rec in lmp_data.masses if rec[0] == lammps_type),
                 None,
             )
 
             # Insert atom type at hop3 level (finest classification)
-            # lammps_type is auto-generated to ensure uniqueness per hop3Key
-            db.insertAtomType(
+            # lammps_type is auto-generated to ensure uniqueness per hop3_key
+            db.insert_atom_type(
                 {
-                    "hop3_key": hop3Key,
-                    "hop2_key": hop2Key,
-                    "hop1_key": hop1Key,
-                    "hop0_key": hop0Key,
+                    "hop3_key": hop3_key,
+                    "hop2_key": hop2_key,
+                    "hop1_key": hop1_key,
+                    "hop0_key": hop0_key,
                     "element": atom["symbol"],
                     "hop0_graph": hop0_graph,
                     "hop3_graph": hop3_graph,
                     "mass": mass[1] if mass else 0.0,
-                    "sigma": pairCoeff[2] if pairCoeff else 0.0,
-                    "epsilon": pairCoeff[1] if pairCoeff else 0.0,
-                    "charge": atomRecord[3],
-                    "source": f"{segName}_{atomIdx}",
+                    "sigma": pair_coeff[2] if pair_coeff else 0.0,
+                    "epsilon": pair_coeff[1] if pair_coeff else 0.0,
+                    "charge": atom_record[3],
+                    "source": f"{seg_name}_{atom_idx}",
                 },
             )
 
             # Get the auto-generated lammps_type from database
-            inserted_info = db.getAtomType(hop3Key)
+            inserted_info = db.get_atom_type(hop3_key)
             assigned_lammps_type = inserted_info["lammps_type"]
 
             # Insert hop keymap (for external validation only)
-            db.insertHopKey([hop0Key, hop1Key, hop2Key], assigned_lammps_type)
+            db.insert_hop_key([hop0_key, hop1_key, hop2_key], assigned_lammps_type)
 
         # Process bonds
         # bond_records: [bond_id, bond_type, a1, a2]
-        for bondRec in lmpData.bond_records:
-            bondType = bondRec[1]
-            a1 = bondRec[2]
-            a2 = bondRec[3]
+        for bond_rec in lmp_data.bond_records:
+            bond_type = bond_rec[1]
+            a1 = bond_rec[2]
+            a2 = bond_rec[3]
 
-            hop0KeyA = atomHop0Key[a1]
-            hop0KeyB = atomHop0Key[a2]
+            hop0_key_a = atom_hop0_key[a1]
+            hop0_key_b = atom_hop0_key[a2]
 
-            # bondCoeffs: [type_id, K, r0] (bond_style harmonic)
-            bondCoeff = next(rec for rec in lmpData.bond_coeffs if rec[0] == bondType)
+            # bond_coeffs: [type_id, K, r0] (bond_style harmonic)
+            bond_coeff = next(rec for rec in lmp_data.bond_coeffs if rec[0] == bond_type)
 
             # Canonical key (order-independent)
-            key = min((hop0KeyA, hop0KeyB), (hop0KeyB, hop0KeyA))
+            key = min((hop0_key_a, hop0_key_b), (hop0_key_b, hop0_key_a))
 
-            db.insertBondParam(key, {"k": bondCoeff[1], "r0": bondCoeff[2]})
+            db.insert_bond_param(key, {"k": bond_coeff[1], "r0": bond_coeff[2]})
 
         # Process angles
         # angle_records: [angle_id, angle_type, a1, a2, a3]
-        for angleRec in lmpData.angle_records:
-            angType = angleRec[1]
-            a1 = angleRec[2]
-            a2 = angleRec[3]
-            a3 = angleRec[4]
+        for angle_rec in lmp_data.angle_records:
+            ang_type = angle_rec[1]
+            a1 = angle_rec[2]
+            a2 = angle_rec[3]
+            a3 = angle_rec[4]
 
-            hop0KeyA = atomHop0Key[a1]
-            hop0KeyB = atomHop0Key[a2]
-            hop0KeyC = atomHop0Key[a3]
+            hop0_key_a = atom_hop0_key[a1]
+            hop0_key_b = atom_hop0_key[a2]
+            hop0_key_c = atom_hop0_key[a3]
 
-            # angleCoeffs: [type_id, K, theta0] (angle_style harmonic)
-            angleCoeff = next(rec for rec in lmpData.angle_coeffs if rec[0] == angType)
+            # angle_coeffs: [type_id, K, theta0] (angle_style harmonic)
+            angle_coeff = next(rec for rec in lmp_data.angle_coeffs if rec[0] == ang_type)
 
             # Canonical key (outer atoms swappable)
-            key = min((hop0KeyA, hop0KeyB, hop0KeyC), (hop0KeyC, hop0KeyB, hop0KeyA))
+            key = min((hop0_key_a, hop0_key_b, hop0_key_c), (hop0_key_c, hop0_key_b, hop0_key_a))
 
-            db.insertAngleParam(key, {"k": angleCoeff[1], "theta0": angleCoeff[2]})
+            db.insert_angle_param(key, {"k": angle_coeff[1], "theta0": angle_coeff[2]})
 
         # Process dihedrals
         # dihedral_records: [dih_id, dih_type, a1, a2, a3, a4]
-        for dihRec in lmpData.dihedral_records:
-            dihType = dihRec[1]
-            a1 = dihRec[2]
-            a2 = dihRec[3]
-            a3 = dihRec[4]
-            a4 = dihRec[5]
+        for dih_rec in lmp_data.dihedral_records:
+            dih_type = dih_rec[1]
+            a1 = dih_rec[2]
+            a2 = dih_rec[3]
+            a3 = dih_rec[4]
+            a4 = dih_rec[5]
 
-            hop0KeyA = atomHop0Key[a1]
-            hop0KeyB = atomHop0Key[a2]
-            hop0KeyC = atomHop0Key[a3]
-            hop0KeyD = atomHop0Key[a4]
+            hop0_key_a = atom_hop0_key[a1]
+            hop0_key_b = atom_hop0_key[a2]
+            hop0_key_c = atom_hop0_key[a3]
+            hop0_key_d = atom_hop0_key[a4]
 
-            # dihCoeffs: [type_id, K1, K2, K3, K4] (dihedral_style opls)
-            dihCoeff = next(rec for rec in lmpData.dihedral_coeffs if rec[0] == dihType)
+            # dih_coeffs: [type_id, K1, K2, K3, K4] (dihedral_style opls)
+            dih_coeff = next(rec for rec in lmp_data.dihedral_coeffs if rec[0] == dih_type)
 
             # Canonical key (A,B,C,D) and (D,C,B,A) are equivalent, pick lexicographically smaller
             key = min(
-                (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD),
-                (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA),
+                (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d),
+                (hop0_key_d, hop0_key_c, hop0_key_b, hop0_key_a),
             )
 
-            db.insertDihedralParam(key, {"coeffs": dihCoeff[1:]})
+            db.insert_dihedral_param(key, {"coeffs": dih_coeff[1:]})
 
         # Process impropers
         # improper_records: [imp_id, imp_type, a1, a2, a3, a4]
-        for impRec in lmpData.improper_records:
-            impType = impRec[1]
-            a1 = impRec[2]
-            a2 = impRec[3]
-            a3 = impRec[4]
-            a4 = impRec[5]
+        for imp_rec in lmp_data.improper_records:
+            imp_type = imp_rec[1]
+            a1 = imp_rec[2]
+            a2 = imp_rec[3]
+            a3 = imp_rec[4]
+            a4 = imp_rec[5]
 
-            hop0KeyA = atomHop0Key[a1]
-            hop0KeyB = atomHop0Key[a2]
-            hop0KeyC = atomHop0Key[a3]
-            hop0KeyD = atomHop0Key[a4]
+            hop0_key_a = atom_hop0_key[a1]
+            hop0_key_b = atom_hop0_key[a2]
+            hop0_key_c = atom_hop0_key[a3]
+            hop0_key_d = atom_hop0_key[a4]
 
-            # impCoeffs: [type_id, K, d, n] (improper_style cvff)
-            impCoeff = next(rec for rec in lmpData.improper_coeffs if rec[0] == impType)
+            # imp_coeffs: [type_id, K, d, n] (improper_style cvff)
+            imp_coeff = next(rec for rec in lmp_data.improper_coeffs if rec[0] == imp_type)
 
             # Canonical key (center fixed, others sorted)
-            others = sorted([hop0KeyB, hop0KeyC, hop0KeyD])
-            key = (hop0KeyA, others[0], others[1], others[2])
+            others = sorted([hop0_key_b, hop0_key_c, hop0_key_d])
+            key = (hop0_key_a, others[0], others[1], others[2])
 
-            db.insertImproperParam(key, {"coeffs": impCoeff[1:]})
+            db.insert_improper_param(key, {"coeffs": imp_coeff[1:]})
 
         log.info(
-            f"  {segName}: {len(atoms)} atoms, {len(bonds)} bonds, "
+            f"  {seg_name}: {len(atoms)} atoms, {len(bonds)} bonds, "
             f"{len(angles)} angles, {len(dihedrals)} dihedrals, {len(impropers)} impropers"
         )
 
         # Update metadata for this sample
-        db.setMeta(
-            segName,
-            f"{lmpPath} | {topoPath if topoPath else '(lmp only)'}",
+        db.set_meta(
+            seg_name,
+            f"{lmp_path} | {topo_path if topo_path else '(lmp only)'}",
         )
 
     # Update metadata
-    db.setMeta("sample_count", str(len(items)))
+    db.set_meta("sample_count", str(len(items)))
 
     # Save database
     db.save()
@@ -243,31 +243,31 @@ def buildDb(samplesDir: Path, dbPath: Path) -> None:
     log.info(f"Database saved to {dbPath}")
     log.info(f"Samples: {len(items)}")
     log.info(
-        f"Processed: {totalAtoms} atoms, {totalBonds} bonds, "
-        f"{totalAngles} angles, {totalDihedrals} dihedrals, {totalImpropers} impropers"
+        f"Processed: {total_atoms} atoms, {total_bonds} bonds, "
+        f"{total_angles} angles, {total_dihedrals} dihedrals, {total_impropers} impropers"
     )
-    log.info(f"Hop3 atom types: {len(db.atomTypes)}")
-    log.info(f"Hop2 atom types: {len(db.hop2Keymap)}")
-    log.info(f"Hop1 atom types: {len(db.hop1Keymap)}")
-    log.info(f"Hop0 atom types: {len(db.hop0Keymap)}")
-    log.info(f"Bond types: {len(db.bondParams)}")
-    log.info(f"Angle types: {len(db.angleParams)}")
-    log.info(f"Dihedral types: {len(db.dihedralParams)}")
-    log.info(f"Improper types: {len(db.improperParams)}")
+    log.info(f"Hop3 atom types: {len(db.atom_types)}")
+    log.info(f"Hop2 atom types: {len(db.hop2_keymap)}")
+    log.info(f"Hop1 atom types: {len(db.hop1_keymap)}")
+    log.info(f"Hop0 atom types: {len(db.hop0_keymap)}")
+    log.info(f"Bond types: {len(db.bond_params)}")
+    log.info(f"Angle types: {len(db.angle_params)}")
+    log.info(f"Dihedral types: {len(db.dihedral_params)}")
+    log.info(f"Improper types: {len(db.improper_params)}")
 
 
 def parameterize(
-    topoPath: Path,
+    topo_path: Path,
     dbPath: Path,
-    outPath: Path | None = None,
+    out_path: Path | None = None,
     total_charge: float = 0.0,
 ) -> dict:
     """Parameterize a target molecule using the database.
 
     Args:
-        topoPath: Path to target molecule .mol or .pdb file.
+        topo_path: Path to target molecule .mol or .pdb file.
         dbPath: Path to the SQLite database file.
-        outPath: Output LAMMPS file path. If None, uses <mol_file>.lmp.
+        out_path: Output LAMMPS file path. If None, uses <mol_file>.lmp.
         total_charge: Target total charge for the system (default: 0).
             Charge will be adjusted evenly across all non-hydrogen atoms.
 
@@ -280,243 +280,259 @@ def parameterize(
     db = MacroMapDB(dbPath)
     db.load()
     log.info(f"Database loaded from {dbPath}")
-    log.debug(f"  Hop3 atom types: {len(db.atomTypes)}")
-    log.debug(f"  Hop2 atom types: {len(db.hop2Keymap)}")
-    log.debug(f"  Hop1 atom types: {len(db.hop1Keymap)}")
-    log.debug(f"  Hop0 atom types: {len(db.hop0Keymap)}")
-    log.debug(f"  Bond types: {len(db.bondParams)}")
-    log.debug(f"  Angle types: {len(db.angleParams)}")
-    log.debug(f"  Dihedral types: {len(db.dihedralParams)}")
-    log.debug(f"  Improper types: {len(db.improperParams)}")
+    log.debug(f"  Hop3 atom types: {len(db.atom_types)}")
+    log.debug(f"  Hop2 atom types: {len(db.hop2_keymap)}")
+    log.debug(f"  Hop1 atom types: {len(db.hop1_keymap)}")
+    log.debug(f"  Hop0 atom types: {len(db.hop0_keymap)}")
+    log.debug(f"  Bond types: {len(db.bond_params)}")
+    log.debug(f"  Angle types: {len(db.angle_params)}")
+    log.debug(f"  Dihedral types: {len(db.dihedral_params)}")
+    log.debug(f"  Improper types: {len(db.improper_params)}")
 
     # Parse target molecule
-    molReader = MolReader(topoPath)
-    atoms = molReader.getAtoms()
-    bonds = molReader.getBonds()
-    angles = molReader.getAngles()
-    dihedrals = molReader.getDihedrals()
-    impropers = molReader.getImpropers()
-    coords = molReader.getCoords()
+    molReader = MolReader(topo_path)
+    atoms = molReader.get_atoms()
+    bonds = molReader.get_bonds()
+    angles = molReader.get_angles()
+    dihedrals = molReader.get_dihedrals()
+    impropers = molReader.get_impropers()
+    coords = molReader.get_coords()
 
-    log.info(f"Parameterizing molecule: {topoPath.name}")
+    log.info(f"Parameterizing molecule: {topo_path.name}")
 
     # Determine output path
-    if outPath is None:
-        outPath = topoPath.with_suffix(".lmp")
+    if out_path is None:
+        out_path = topo_path.with_suffix(".lmp")
 
     # Resolve atom types
-    atomTypeMap: dict[int, int] = {}  # atomIdx -> lammps_type (resolved from db)
-    atomTypeParams: dict[int, dict] = (
+    atom_type_map: dict[int, int] = {}  # atom_idx -> lammps_type (resolved from db)
+    atom_type_params: dict[int, dict] = (
         {}
     )  # lammps_type -> {type: consecutive_output_type, element, mass, sigma, epsilon, charge}
-    atomHop0Key: dict[int, str] = {}  # atomIdx -> hop0Key (resolved from db)
-    atomHop3Key: dict[int, str] = {}  # atomIdx -> hop3Key (for debugging)
-    atomFallbackLevel: dict[int, str] = {}  # atomIdx -> fallback level (hop2/hop1/hop0)
-    nextAtomTypeId = 1
-    hop3Matches = 0
-    hop2Matches = 0
-    hop1Matches = 0
-    hop0Matches = 0
-    noMatch = 0
+    atom_hop0_key: dict[int, str] = {}  # atom_idx -> hop0_key (resolved from db)
+    atom_hop3_key: dict[int, str] = {}  # atom_idx -> hop3_key (for debugging)
+    atom_fallback_level: dict[int, str] = {}  # atom_idx -> fallback level (hop2/hop1/hop0)
+    next_atom_type_id = 1
+    hop3_matches = 0
+    hop2_matches = 0
+    hop1_matches = 0
+    hop0_matches = 0
+    no_match = 0
 
     for atom in atoms:
-        atomIdx = atom["idx"]
-        hop3Key, hop2Key, hop1Key, hop0Key = computeHopKeys(molReader, atomIdx)
-        atomHop0Key[atomIdx] = hop0Key
-        atomHop3Key[atomIdx] = hop3Key
+        atom_idx = atom["idx"]
+        hop3_key, hop2_key, hop1_key, hop0_key = compute_hop_keys(molReader, atom_idx)
+        atom_hop0_key[atom_idx] = hop0_key
+        atom_hop3_key[atom_idx] = hop3_key
 
-        lammpsType, resolvedHop0Key, hopLevel, matchedHop3Key = resolveAtomType(
-            hop3Key, hop2Key, hop1Key, hop0Key, db
+        lammps_type, resolved_hop0Key, hop_level, matched_hop3Key = resolve_atom_type(
+            hop3_key, hop2_key, hop1_key, hop0_key, db
         )
-        # Use lammpsType as the type identifier
-        atomTypeMap[atomIdx] = lammpsType
-        atomHop0Key[atomIdx] = resolvedHop0Key
+        # Use lammps_type as the type identifier
+        atom_type_map[atom_idx] = lammps_type
+        atom_hop0_key[atom_idx] = resolved_hop0Key
 
         # Collect atom type parameters (deduplicated by db_lammps_type)
-        if lammpsType is not None and lammpsType not in atomTypeParams:
-            info = db.atomTypes[matchedHop3Key]
-            atomTypeParams[lammpsType] = {
-                "type": nextAtomTypeId,
+        if lammps_type is not None and lammps_type not in atom_type_params:
+            info = db.atom_types[matched_hop3Key]
+            atom_type_params[lammps_type] = {
+                "type": next_atom_type_id,
                 "element": info["element"],
                 "mass": info["mass"],
                 "sigma": info["sigma"],
                 "epsilon": info["epsilon"],
                 "charge": info["charge"],
             }
-            nextAtomTypeId += 1
+            next_atom_type_id += 1
+        elif lammps_type is None:
+            atom_type_params[None] = {
+                "type": next_atom_type_id,
+                "element": atom["symbol"],
+                "mass": 0.0,
+                "sigma": 0.0,
+                "epsilon": 0.0,
+                "charge": 0.0,
+            }
+            next_atom_type_id += 1
 
         # Track match statistics
-        if hopLevel == "hop3":
-            hop3Matches += 1
+        if hop_level == "hop3":
+            hop3_matches += 1
             log.debug(
-                f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType}"
+                f"  Atom {atom_idx}: element={atom['symbol']}, lammps_type={lammps_type}"
             )
-        elif hopLevel == "hop2":
-            hop2Matches += 1
-            atomFallbackLevel[atomIdx] = "hop2"
+        elif hop_level == "hop2":
+            hop2_matches += 1
+            atom_fallback_level[atom_idx] = "hop2"
             log.debug(
-                f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop2 fallback)"
+                f"  Atom {atom_idx}: element={atom['symbol']}, lammps_type={lammps_type} (hop2 fallback)"
             )
-        elif hopLevel == "hop1":
-            hop1Matches += 1
-            atomFallbackLevel[atomIdx] = "hop1"
+        elif hop_level == "hop1":
+            hop1_matches += 1
+            atom_fallback_level[atom_idx] = "hop1"
             log.debug(
-                f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop1 fallback)"
+                f"  Atom {atom_idx}: element={atom['symbol']}, lammps_type={lammps_type} (hop1 fallback)"
             )
-        elif hopLevel == "hop0":
-            hop0Matches += 1
-            atomFallbackLevel[atomIdx] = "hop0"
+        elif hop_level == "hop0":
+            hop0_matches += 1
+            atom_fallback_level[atom_idx] = "hop0"
             log.debug(
-                f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (hop0 fallback)"
+                f"  Atom {atom_idx}: element={atom['symbol']}, lammps_type={lammps_type} (hop0 fallback)"
             )
         else:
-            noMatch += 1
-            atomFallbackLevel[atomIdx] = "none"
+            no_match += 1
+            atom_fallback_level[atom_idx] = "none"
             log.debug(
-                f"  Atom {atomIdx}: element={atom['symbol']}, lammps_type={lammpsType} (NO MATCH)"
+                f"  Atom {atom_idx}: element={atom['symbol']}, lammps_type={lammps_type} (NO MATCH)"
             )
 
     # Look up bond parameters
-    bondTypeMap: dict[int, int] = {}  # bondIdx -> newBondTypeId
-    bondTypeParams: dict[int, tuple] = {}  # newBondTypeId -> (k, r0)
-    nextBondTypeId = 1
-    bondNoMatch = 0
-    bondNoMatchAtoms: list[tuple[int, int]] = []
+    bond_type_map: dict[int, int] = {}  # bond_idx -> new_bond_type_id
+    bond_type_params: dict[int, tuple] = {}  # new_bond_type_id -> (k, r0)
+    next_bond_type_id = 1
+    bond_no_match = 0
+    bond_no_match_atoms: list[tuple[int, int]] = []
 
     for bond in bonds:
-        bondIdx = bond["idx"]
+        bond_idx = bond["idx"]
         a1 = bond["a1"]
         a2 = bond["a2"]
-        hop0KeyA = atomHop0Key.get(a1)
-        hop0KeyB = atomHop0Key.get(a2)
-        if hop0KeyA is None or hop0KeyB is None:
-            raise ValueError(
-                f"Bond {bondIdx} references missing atom {a1 if hop0KeyA is None else a2}"
-            )
+        hop0_key_a = atom_hop0_key.get(a1)
+        hop0_key_b = atom_hop0_key.get(a2)
 
-        # Look up bond param
-        bondParam = db.lookupBondParam(hop0KeyA, hop0KeyB)
-        if bondParam is None:
-            bondNoMatch += 1
-            bondNoMatchAtoms.append((a1, a2))
-            continue
+        # Look up bond param - zeroed if hop0_key is None or lookup returns None
+        if hop0_key_a is None or hop0_key_b is None:
+            bond_no_match += 1
+            bond_no_match_atoms.append((a1, a2))
+            param_key = (0.0, 0.0)
+        else:
+            bond_param = db.lookup_bond_param(hop0_key_a, hop0_key_b)
+            if bond_param is None:
+                bond_no_match += 1
+                bond_no_match_atoms.append((a1, a2))
+                param_key = (0.0, 0.0)
+            else:
+                param_key = (bond_param["k"], bond_param["r0"])
 
         # Create bond type if not seen
-        paramKey = (bondParam["k"], bondParam["r0"])
-        bondTypeId = None
-        for btid, (bk, br0) in bondTypeParams.items():
-            if abs(bk - paramKey[0]) < 0.01 and abs(br0 - paramKey[1]) < 0.001:
-                bondTypeId = btid
+        bond_type_id = None
+        for btid, (bk, br0) in bond_type_params.items():
+            if abs(bk - param_key[0]) < 0.01 and abs(br0 - param_key[1]) < 0.001:
+                bond_type_id = btid
                 break
 
-        if bondTypeId is None:
-            bondTypeId = nextBondTypeId
-            nextBondTypeId += 1
-            bondTypeParams[bondTypeId] = paramKey
+        if bond_type_id is None:
+            bond_type_id = next_bond_type_id
+            next_bond_type_id += 1
+            bond_type_params[bond_type_id] = param_key
 
-        bondTypeMap[bondIdx] = bondTypeId
+        bond_type_map[bond_idx] = bond_type_id
 
     # Look up angle parameters
-    angleTypeMap: dict[int, int] = {}  # angleIdx -> newAngleTypeId
-    angleTypeParams: dict[int, tuple] = {}  # newAngleTypeId -> (k, theta0)
-    nextAngleTypeId = 1
-    angleNoMatch = 0
-    angleNoMatchAtoms: list[tuple[int, int, int]] = []
+    angle_type_map: dict[int, int] = {}  # angle_idx -> new_angle_type_id
+    angle_type_params: dict[int, tuple] = {}  # new_angle_type_id -> (k, theta0)
+    next_angle_type_id = 1
+    angle_no_match = 0
+    angle_no_match_atoms: list[tuple[int, int, int]] = []
 
     for angle in angles:
-        angleIdx = angle["idx"]
+        angle_idx = angle["idx"]
         a1 = angle["a1"]
         a2 = angle["a2"]
         a3 = angle["a3"]
-        hop0KeyA = atomHop0Key.get(a1)
-        hop0KeyB = atomHop0Key.get(a2)
-        hop0KeyC = atomHop0Key.get(a3)
-        if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None:
-            raise ValueError(
-                f"Angle {angleIdx} references missing atom {a1 if hop0KeyA is None else a2 if hop0KeyB is None else a3}"
-            )
+        hop0_key_a = atom_hop0_key.get(a1)
+        hop0_key_b = atom_hop0_key.get(a2)
+        hop0_key_c = atom_hop0_key.get(a3)
 
-        # Look up angle param
-        angleParam = db.lookupAngleParam(hop0KeyA, hop0KeyB, hop0KeyC)
-        if angleParam is None:
-            angleNoMatch += 1
-            angleNoMatchAtoms.append((a1, a2, a3))
-            continue
+        if hop0_key_a is None or hop0_key_b is None or hop0_key_c is None:
+            angle_no_match += 1
+            angle_no_match_atoms.append((a1, a2, a3))
+            param_key = (0.0, 0.0)
+        else:
+            angle_param = db.lookup_angle_param(hop0_key_a, hop0_key_b, hop0_key_c)
+            if angle_param is None:
+                angle_no_match += 1
+                angle_no_match_atoms.append((a1, a2, a3))
+                param_key = (0.0, 0.0)
+            else:
+                param_key = (angle_param["k"], angle_param["theta0"])
 
         # Create angle type if not seen
-        paramKey = (angleParam["k"], angleParam["theta0"])
-        angleTypeId = None
-        for atid, (ak, ath) in angleTypeParams.items():
-            if abs(ak - paramKey[0]) < 0.01 and abs(ath - paramKey[1]) < 0.1:
-                angleTypeId = atid
+        angle_type_id = None
+        for atid, (ak, ath) in angle_type_params.items():
+            if abs(ak - param_key[0]) < 0.01 and abs(ath - param_key[1]) < 0.1:
+                angle_type_id = atid
                 break
 
-        if angleTypeId is None:
-            angleTypeId = nextAngleTypeId
-            nextAngleTypeId += 1
-            angleTypeParams[angleTypeId] = paramKey
+        if angle_type_id is None:
+            angle_type_id = next_angle_type_id
+            next_angle_type_id += 1
+            angle_type_params[angle_type_id] = param_key
 
-        angleTypeMap[angleIdx] = angleTypeId
+        angle_type_map[angle_idx] = angle_type_id
 
     # Look up dihedral parameters
-    dihedralTypeMap: dict[int, int] = {}  # dihIdx -> newDihTypeId
-    dihedralTypeParams: dict[int, tuple] = {}  # newDihTypeId -> coeffs tuple
-    nextDihedralTypeId = 1
-    dihedralNoMatch = 0
-    dihedralNoMatchAtoms: list[tuple[int, int, int, int]] = []
+    dihedral_type_map: dict[int, int] = {}  # dih_idx -> new_dih_type_id
+    dihedral_type_params: dict[int, tuple] = {}  # new_dih_type_id -> coeffs tuple
+    next_dihedral_type_id = 1
+    dihedral_no_match = 0
+    dihedral_no_match_atoms: list[tuple[int, int, int, int]] = []
 
     for dihedral in dihedrals:
-        dihIdx = dihedral["idx"]
+        dih_idx = dihedral["idx"]
         a1 = dihedral["a1"]
         a2 = dihedral["a2"]
         a3 = dihedral["a3"]
         a4 = dihedral["a4"]
-        hop0KeyA = atomHop0Key.get(a1)
-        hop0KeyB = atomHop0Key.get(a2)
-        hop0KeyC = atomHop0Key.get(a3)
-        hop0KeyD = atomHop0Key.get(a4)
-        if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None or hop0KeyD is None:
-            raise ValueError(
-                f"Dihedral {dihIdx} references missing atom {a1 if hop0KeyA is None else a2 if hop0KeyB is None else a3 if hop0KeyC is None else a4}"
-            )
+        hop0_key_a = atom_hop0_key.get(a1)
+        hop0_key_b = atom_hop0_key.get(a2)
+        hop0_key_c = atom_hop0_key.get(a3)
+        hop0_key_d = atom_hop0_key.get(a4)
 
-        # Look up dihedral param
-        dihedralParam = db.lookupDihedralParam(hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
-        if dihedralParam is None:
-            dihedralNoMatch += 1
-            dihedralNoMatchAtoms.append((a1, a2, a3, a4))
-            continue
+        if hop0_key_a is None or hop0_key_b is None or hop0_key_c is None or hop0_key_d is None:
+            dihedral_no_match += 1
+            dihedral_no_match_atoms.append((a1, a2, a3, a4))
+            coeffs = (0.0, 0.0, 0.0, 0.0)
+        else:
+            dihedral_param = db.lookup_dihedral_param(
+                hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d
+            )
+            if dihedral_param is None:
+                dihedral_no_match += 1
+                dihedral_no_match_atoms.append((a1, a2, a3, a4))
+                coeffs = (0.0, 0.0, 0.0, 0.0)
+            else:
+                coeffs = tuple(dihedral_param.get("coeffs", []))
 
         # Create dihedral type if not seen
-        coeffs = tuple(dihedralParam.get("coeffs", []))
-        dihedralTypeId = None
-        for dtid, existing_coeffs in dihedralTypeParams.items():
+        dihedral_type_id = None
+        for dtid, existing_coeffs in dihedral_type_params.items():
             if len(coeffs) == len(existing_coeffs):
                 match = all(abs(c - e) < 0.01 for c, e in zip(coeffs, existing_coeffs))
                 if match:
-                    dihedralTypeId = dtid
+                    dihedral_type_id = dtid
                     break
 
-        if dihedralTypeId is None:
-            dihedralTypeId = nextDihedralTypeId
-            nextDihedralTypeId += 1
-            dihedralTypeParams[dihedralTypeId] = coeffs
+        if dihedral_type_id is None:
+            dihedral_type_id = next_dihedral_type_id
+            next_dihedral_type_id += 1
+            dihedral_type_params[dihedral_type_id] = coeffs
 
-        dihedralTypeMap[dihIdx] = dihedralTypeId
+        dihedral_type_map[dih_idx] = dihedral_type_id
 
     # Look up improper parameters
-    improperTypeMap: dict[int, int] = {}  # impIdx -> newImpTypeId
-    improperTypeParams: dict[int, tuple] = {}  # newImpTypeId -> coeffs tuple
-    nextImproperTypeId = 1
-    improperNoMatch = 0
-    improperNoMatchAtoms: list[tuple[int, int, int, int]] = []
+    improper_type_map: dict[int, int] = {}  # imp_idx -> new_imp_type_id
+    improper_type_params: dict[int, tuple] = {}  # new_imp_type_id -> coeffs tuple
+    next_improper_type_id = 1
+    improper_no_match = 0
+    improper_no_match_atoms: list[tuple[int, int, int, int]] = []
 
     # Build atom and atom degree index for cvff improper filtering
     atom_name_by_idx = {a["idx"]: a for a in atoms}
     atom_degree_by_idx = {a["idx"]: a["degree"] for a in atoms}
 
     for improper in impropers:
-        impIdx = improper["idx"]
+        imp_idx = improper["idx"]
         a1 = improper["a1"]
         a2 = improper["a2"]
         a3 = improper["a3"]
@@ -531,189 +547,192 @@ def parameterize(
         if atom_degree_by_idx.get(a1, 0) != 3:
             continue
 
-        hop0KeyA = atomHop0Key.get(a1)
-        hop0KeyB = atomHop0Key.get(a2)
-        hop0KeyC = atomHop0Key.get(a3)
-        hop0KeyD = atomHop0Key.get(a4)
-        if hop0KeyA is None or hop0KeyB is None or hop0KeyC is None or hop0KeyD is None:
-            raise ValueError(
-                f"Improper {impIdx} references missing atom {a1 if hop0KeyA is None else a2 if hop0KeyB is None else a3 if hop0KeyC is None else a4}"
-            )
+        hop0_key_a = atom_hop0_key.get(a1)
+        hop0_key_b = atom_hop0_key.get(a2)
+        hop0_key_c = atom_hop0_key.get(a3)
+        hop0_key_d = atom_hop0_key.get(a4)
 
-        # Look up improper param
-        improperParam = db.lookupImproperParam(hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
-        if improperParam is None:
-            improperNoMatch += 1
-            improperNoMatchAtoms.append((a1, a2, a3, a4))
-            continue
+        if hop0_key_a is None or hop0_key_b is None or hop0_key_c is None or hop0_key_d is None:
+            improper_no_match += 1
+            improper_no_match_atoms.append((a1, a2, a3, a4))
+            coeffs = (0.0, -1, 2)
+        else:
+            improper_param = db.lookup_improper_param(
+                hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d
+            )
+            if improper_param is None:
+                improper_no_match += 1
+                improper_no_match_atoms.append((a1, a2, a3, a4))
+                coeffs = (0.0, -1, 2)
+            else:
+                coeffs = tuple(improper_param.get("coeffs", []))
 
         # Create improper type if not seen
-        coeffs = tuple(improperParam.get("coeffs", []))
-        improperTypeId = None
-        for itid, existing_coeffs in improperTypeParams.items():
+        improper_type_id = None
+        for itid, existing_coeffs in improper_type_params.items():
             if len(coeffs) == len(existing_coeffs):
                 match = all(abs(c - e) < 0.01 for c, e in zip(coeffs, existing_coeffs))
                 if match:
-                    improperTypeId = itid
+                    improper_type_id = itid
                     break
 
-        if improperTypeId is None:
-            improperTypeId = nextImproperTypeId
-            nextImproperTypeId += 1
-            improperTypeParams[improperTypeId] = coeffs
+        if improper_type_id is None:
+            improper_type_id = next_improper_type_id
+            next_improper_type_id += 1
+            improper_type_params[improper_type_id] = coeffs
 
-        improperTypeMap[impIdx] = improperTypeId
+        improper_type_map[imp_idx] = improper_type_id
 
     # Write all warnings first
-    if bondNoMatch > 0:
-        for a1, a2 in bondNoMatchAtoms:
+    if bond_no_match > 0:
+        for a1, a2 in bond_no_match_atoms:
             log.warning(f"  No bond param for atoms {a1}-{a2}")
-    if angleNoMatch > 0:
-        for a1, a2, a3 in angleNoMatchAtoms:
+    if angle_no_match > 0:
+        for a1, a2, a3 in angle_no_match_atoms:
             log.warning(f"  No angle param for atoms {a1}-{a2}-{a3}")
-    if dihedralNoMatch > 0:
-        for a1, a2, a3, a4 in dihedralNoMatchAtoms:
+    if dihedral_no_match > 0:
+        for a1, a2, a3, a4 in dihedral_no_match_atoms:
             log.warning(f"  No dihedral param for atoms {a1}-{a2}-{a3}-{a4}")
-    if improperNoMatch > 0:
-        for a1, a2, a3, a4 in improperNoMatchAtoms:
+    if improper_no_match > 0:
+        for a1, a2, a3, a4 in improper_no_match_atoms:
             log.warning(f"  No improper param for atoms {a1}-{a2}-{a3}-{a4}")
 
     # Write all parameter info lines
     log.info(
-        f"Bond parameters: {len(bondTypeMap)} bonds, {len(bondTypeParams)} unique types, {bondNoMatch} no match"
+        f"Bond parameters: {len(bond_type_map)} bonds, {len(bond_type_params)} unique types, {bond_no_match} no match"
     )
     log.info(
-        f"Angle parameters: {len(angleTypeMap)} angles, {len(angleTypeParams)} unique types, {angleNoMatch} no match"
+        f"Angle parameters: {len(angle_type_map)} angles, {len(angle_type_params)} unique types, {angle_no_match} no match"
     )
     log.info(
-        f"Dihedral parameters: {len(dihedralTypeMap)} dihedrals, {len(dihedralTypeParams)} unique types, {dihedralNoMatch} no match"
+        f"Dihedral parameters: {len(dihedral_type_map)} dihedrals, {len(dihedral_type_params)} unique types, {dihedral_no_match} no match"
     )
     log.info(
-        f"Improper parameters: {len(improperTypeMap)} impropers, {len(improperTypeParams)} unique types, {improperNoMatch} no match"
+        f"Improper parameters: {len(improper_type_map)} impropers, {len(improper_type_params)} unique types, {improper_no_match} no match"
     )
 
     log.info(
-        f"Atom type assignment: {len(atoms)} atoms, {len(atomTypeParams)} unique types, {noMatch} no match"
+        f"Atom type assignment: {len(atoms)} atoms, {len(atom_type_params)} unique types, {no_match} no match"
     )
-    log.info(f"  hop3 matches: {hop3Matches}")
-    log.info(f"  hop2 matches: {hop2Matches}")
-    log.info(f"  hop1 matches: {hop1Matches}")
-    log.info(f"  hop0 matches: {hop0Matches}")
-    log.info(f"  no match: {noMatch}")
+    log.info(f"  hop3 matches: {hop3_matches}")
+    log.info(f"  hop2 matches: {hop2_matches}")
+    log.info(f"  hop1 matches: {hop1_matches}")
+    log.info(f"  hop0 matches: {hop0_matches}")
+    log.info(f"  no match: {no_match}")
 
     # Build output data
     # Get box dimensions from coordinates
-    allCoords = list(coords.values())
-    xvals = [c[0] for c in allCoords]
-    yvals = [c[1] for c in allCoords]
-    zvals = [c[2] for c in allCoords]
+    all_coords = list(coords.values())
+    xvals = [c[0] for c in all_coords]
+    yvals = [c[1] for c in all_coords]
+    zvals = [c[2] for c in all_coords]
     xlo, xhi = min(xvals) - 5, max(xvals) + 5
     ylo, yhi = min(yvals) - 5, max(yvals) + 5
     zlo, zhi = min(zvals) - 5, max(zvals) + 5
 
     # Build LammpsData object
-    lmpData = LammpsData()
-    lmpData.header_comment = "LAMMPS data file Generated by mappingff"
-    lmpData.atoms = len(atoms)
-    lmpData.bonds = len(bondTypeMap)
-    lmpData.angles = len(angleTypeMap)
-    lmpData.dihedrals = len(dihedralTypeMap)
-    lmpData.impropers = len(improperTypeMap)
-    lmpData.atom_types = len(atomTypeParams)
-    lmpData.bond_types = len(bondTypeParams)
-    lmpData.angle_types = len(angleTypeParams)
-    lmpData.dihedral_types = len(dihedralTypeParams)
-    lmpData.improper_types = len(improperTypeParams)
-    lmpData.xlo = xlo
-    lmpData.xhi = xhi
-    lmpData.ylo = ylo
-    lmpData.yhi = yhi
-    lmpData.zlo = zlo
-    lmpData.zhi = zhi
+    lmp_data = LammpsData()
+    lmp_data.header_comment = "LAMMPS data file Generated by mappingff"
+    lmp_data.atoms = len(atoms)
+    lmp_data.bonds = len(bond_type_map)
+    lmp_data.angles = len(angle_type_map)
+    lmp_data.dihedrals = len(dihedral_type_map)
+    lmp_data.impropers = len(improper_type_map)
+    lmp_data.atom_types = len(atom_type_params)
+    lmp_data.bond_types = len(bond_type_params)
+    lmp_data.angle_types = len(angle_type_params)
+    lmp_data.dihedral_types = len(dihedral_type_params)
+    lmp_data.improper_types = len(improper_type_params)
+    lmp_data.xlo = xlo
+    lmp_data.xhi = xhi
+    lmp_data.ylo = ylo
+    lmp_data.yhi = yhi
+    lmp_data.zlo = zlo
+    lmp_data.zhi = zhi
 
     # Masses
-    for db_type, params in sorted(atomTypeParams.items()):
-        lmpData.masses.append((params["type"], params["mass"]))
+    for db_type, params in sorted(atom_type_params.items(), key=lambda x: x[1]["type"]):
+        lmp_data.masses.append((params["type"], params["mass"]))
 
     # Pair Coeffs
-    for db_type, params in sorted(atomTypeParams.items()):
-        lmpData.pair_coeffs.append((params["type"], params["epsilon"], params["sigma"]))
+    for db_type, params in sorted(atom_type_params.items(), key=lambda x: x[1]["type"]):
+        lmp_data.pair_coeffs.append((params["type"], params["epsilon"], params["sigma"]))
 
     # Bond Coeffs
-    for btid in sorted(bondTypeParams.keys()):
-        k, r0 = bondTypeParams[btid]
-        lmpData.bond_coeffs.append((btid, k, r0))
+    for btid in sorted(bond_type_params.keys()):
+        k, r0 = bond_type_params[btid]
+        lmp_data.bond_coeffs.append((btid, k, r0))
 
     # Angle Coeffs
-    for atid in sorted(angleTypeParams.keys()):
-        k, theta0 = angleTypeParams[atid]
-        lmpData.angle_coeffs.append((atid, k, theta0))
+    for atid in sorted(angle_type_params.keys()):
+        k, theta0 = angle_type_params[atid]
+        lmp_data.angle_coeffs.append((atid, k, theta0))
 
     # Dihedral Coeffs
-    for dtid in sorted(dihedralTypeParams.keys()):
-        coeffs = dihedralTypeParams[dtid]
-        lmpData.dihedral_coeffs.append((dtid,) + coeffs)
+    for dtid in sorted(dihedral_type_params.keys()):
+        coeffs = dihedral_type_params[dtid]
+        lmp_data.dihedral_coeffs.append((dtid,) + coeffs)
 
     # Improper Coeffs
-    for itid in sorted(improperTypeParams.keys()):
-        coeffs = improperTypeParams[itid]
-        lmpData.improper_coeffs.append((itid,) + coeffs)
+    for itid in sorted(improper_type_params.keys()):
+        coeffs = improper_type_params[itid]
+        lmp_data.improper_coeffs.append((itid,) + coeffs)
 
     # Atom records
     for atom in atoms:
-        atomIdx = atom["idx"]
-        lammpsType = atomTypeMap[atomIdx]
-        outputType = atomTypeParams[lammpsType]["type"]
-        charge = atomTypeParams[lammpsType].get("charge", 0.0)
-        x, y, z = coords[atomIdx]
-        lmpData.atom_records.append((atomIdx, 1, outputType, charge, x, y, z))
+        atom_idx = atom["idx"]
+        lammps_type = atom_type_map[atom_idx]
+        output_type = atom_type_params[lammps_type]["type"]
+        charge = atom_type_params[lammps_type].get("charge", 0.0)
+        x, y, z = coords[atom_idx]
+        lmp_data.atom_records.append((atom_idx, 1, output_type, charge, x, y, z))
 
     # Bond records
     for bond in bonds:
-        bondIdx = bond["idx"]
-        if bondIdx in bondTypeMap:
-            bt = bondTypeMap[bondIdx]
+        bond_idx = bond["idx"]
+        if bond_idx in bond_type_map:
+            bt = bond_type_map[bond_idx]
             a1 = bond["a1"]
             a2 = bond["a2"]
-            lmpData.bond_records.append((bondIdx, bt, a1, a2))
+            lmp_data.bond_records.append((bond_idx, bt, a1, a2))
 
     # Angle records
     for angle in angles:
-        angleIdx = angle["idx"]
-        if angleIdx in angleTypeMap:
-            at = angleTypeMap[angleIdx]
+        angle_idx = angle["idx"]
+        if angle_idx in angle_type_map:
+            at = angle_type_map[angle_idx]
             a1 = angle["a1"]
             a2 = angle["a2"]
             a3 = angle["a3"]
-            lmpData.angle_records.append((angleIdx, at, a1, a2, a3))
+            lmp_data.angle_records.append((angle_idx, at, a1, a2, a3))
 
     # Dihedral records
     for dihedral in dihedrals:
-        dihIdx = dihedral["idx"]
-        if dihIdx in dihedralTypeMap:
-            dt = dihedralTypeMap[dihIdx]
+        dih_idx = dihedral["idx"]
+        if dih_idx in dihedral_type_map:
+            dt = dihedral_type_map[dih_idx]
             a1 = dihedral["a1"]
             a2 = dihedral["a2"]
             a3 = dihedral["a3"]
             a4 = dihedral["a4"]
-            lmpData.dihedral_records.append((dihIdx, dt, a1, a2, a3, a4))
+            lmp_data.dihedral_records.append((dih_idx, dt, a1, a2, a3, a4))
 
     # Improper records
     for improper in impropers:
-        impIdx = improper["idx"]
-        if impIdx in improperTypeMap:
-            it = improperTypeMap[impIdx]
+        imp_idx = improper["idx"]
+        if imp_idx in improper_type_map:
+            it = improper_type_map[imp_idx]
             a1 = improper["a1"]
             a2 = improper["a2"]
             a3 = improper["a3"]
             a4 = improper["a4"]
-            lmpData.improper_records.append((impIdx, it, a1, a2, a3, a4))
+            lmp_data.improper_records.append((imp_idx, it, a1, a2, a3, a4))
 
     # Adjust total charge if needed
-    before_charge = sum(atom[3] for atom in lmpData.atom_records)
+    before_charge = sum(atom[3] for atom in lmp_data.atom_records)
     if total_charge is not None:
-        after_step1_charge, after_step2_charge = adjustTotalCharge(
-            lmpData, total_charge, db, atomTypeParams
+        after_step1_charge, after_step2_charge = adjust_total_charge(
+            lmp_data, total_charge, db, atom_type_params
         )
         log.info(
             f"Total charge: {after_step2_charge:.6f} "
@@ -723,22 +742,22 @@ def parameterize(
             f"target: {total_charge})"
         )
     else:
-        log.info(f"Total charge: {before_charge:.6f} (no adjustment requested)")
+        log.info(f"Total charge: {before_charge:.6f}")
 
     # Write LAMMPS file
-    generateLammps(lmpData, outPath)
-    log.info(f"Output written to {outPath}")
+    generate_lammps(lmp_data, out_path)
+    log.info(f"Output written to {out_path}")
 
     return {
         "atoms": len(atoms),
         "bonds": len(bonds),
-        "angles": len(angleTypeMap),
-        "dihedrals": len(dihedralTypeMap),
-        "impropers": len(improperTypeMap),
-        "unique_types": len(atomTypeParams),
-        "hop3_matches": hop3Matches,
-        "hop2_matches": hop2Matches,
-        "hop1_matches": hop1Matches,
-        "hop0_matches": hop0Matches,
-        "no_match": noMatch,
+        "angles": len(angle_type_map),
+        "dihedrals": len(dihedral_type_map),
+        "impropers": len(improper_type_map),
+        "unique_types": len(atom_type_params),
+        "hop3_matches": hop3_matches,
+        "hop2_matches": hop2_matches,
+        "hop1_matches": hop1_matches,
+        "hop0_matches": hop0_matches,
+        "no_match": no_match,
     }

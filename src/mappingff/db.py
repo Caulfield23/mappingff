@@ -327,7 +327,7 @@ class MacroMapDB:
 
     # ── atom_types operations (hop3 level) ─────────────────────────────────────
 
-    def insertAtomType(self, info: dict) -> None:
+    def insert_atom_type(self, info: dict) -> None:
         """Insert or update an atom type entry at hop3 level (finest classification).
 
         If hop3_key already exists, merge sigma_list, epsilon_list, charge_list, and source.
@@ -411,7 +411,7 @@ class MacroMapDB:
                 ),
             )
 
-    def getAtomType(self, hop3Key: str) -> dict | None:
+    def get_atom_type(self, hop3Key: str) -> dict | None:
         """Retrieve an atom type entry by hop3 key.
 
         Args:
@@ -447,7 +447,7 @@ class MacroMapDB:
             "hop0_env": json.loads(row["hop0_graph"]) if row["hop0_graph"] else {},
         }
 
-    def insertHopKey(self, hopKeys: list[str], lammpsType: int) -> None:
+    def insert_hop_key(self, hopKeys: list[str], lammpsType: int) -> None:
         """Insert or update hop0/1/2 keymap entries.
 
         Args:
@@ -483,7 +483,7 @@ class MacroMapDB:
 
     # ── Bonded parameter operations ───────────────────────────────────────────
 
-    def insertBondParam(self, key: tuple, params: dict) -> None:
+    def insert_bond_param(self, key: tuple, params: dict) -> None:
         """Insert or merge a bond parameter entry.
 
         When the same key already exists (same atom type pair), parameters
@@ -525,14 +525,14 @@ class MacroMapDB:
                 (key[0], key[1], json.dumps(new_coeff), json.dumps([new_coeff])),
             )
 
-    def lookupBondParam(self, hop0KeyA: str, hop0KeyB: str) -> dict | None:
+    def lookup_bond_param(self, hop0_key_a: str, hop0_key_b: str) -> dict | None:
         """Look up bond parameter by hop0 key pair.
 
         Keys are stored in lexicographic order, so the input order does not matter.
 
         Args:
-            hop0KeyA: hop0 key of first atom.
-            hop0KeyB: hop0 key of second atom.
+            hop0_key_a: hop0 key of first atom.
+            hop0_key_b: hop0 key of second atom.
 
         Returns:
             Bond parameter dict if found, None otherwise.
@@ -541,10 +541,10 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        keyA, keyB = sorted([hop0KeyA, hop0KeyB])
+        key_a, key_b = sorted([hop0_key_a, hop0_key_b])
         cursor.execute(
             "SELECT coeffs FROM bond_params WHERE hop0_key_a = ? AND hop0_key_b = ?",
-            (keyA, keyB),
+            (key_a, key_b),
         )
         row = cursor.fetchone()
 
@@ -553,7 +553,7 @@ class MacroMapDB:
         coeffs = json.loads(row["coeffs"])
         return {"k": coeffs[0], "r0": coeffs[1]}
 
-    def insertAngleParam(self, key: tuple, params: dict) -> None:
+    def insert_angle_param(self, key: tuple, params: dict) -> None:
         """Insert or merge an angle parameter entry.
 
         When the same key already exists, parameters are averaged.
@@ -602,7 +602,7 @@ class MacroMapDB:
                 ),
             )
 
-    def lookupAngleParam(
+    def lookup_angle_param(
         self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str
     ) -> dict | None:
         """Look up angle parameter by hop0 key triple.
@@ -643,7 +643,7 @@ class MacroMapDB:
         coeffs = json.loads(row["coeffs"])
         return {"k": coeffs[0], "theta0": coeffs[1]}
 
-    def insertDihedralParam(self, key: tuple, params: dict) -> None:
+    def insert_dihedral_param(self, key: tuple, params: dict) -> None:
         """Insert or merge a dihedral parameter entry.
 
         When the same key already exists, coefficient arrays are averaged.
@@ -694,7 +694,7 @@ class MacroMapDB:
                 ),
             )
 
-    def lookupDihedralParam(
+    def lookup_dihedral_param(
         self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
     ) -> dict | None:
         """Look up dihedral parameter by hop0 key quadruple.
@@ -739,7 +739,7 @@ class MacroMapDB:
             return None
         return {"coeffs": json.loads(row["coeffs"])}
 
-    def insertImproperParam(self, key: tuple, params: dict) -> None:
+    def insert_improper_param(self, key: tuple, params: dict) -> None:
         """Insert or merge an improper parameter entry.
 
         The first atom in the key is the center atom and is fixed.
@@ -793,7 +793,7 @@ class MacroMapDB:
                 ),
             )
 
-    def lookupImproperParam(
+    def lookup_improper_param(
         self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
     ) -> dict | None:
         """Look up improper parameter by hop0 key quadruple.
@@ -827,7 +827,7 @@ class MacroMapDB:
             return None
         return {"coeffs": json.loads(row["coeffs"])}
 
-    def getMeta(self, key: str) -> str | None:
+    def get_meta(self, key: str) -> str | None:
         """Get a meta value by key.
 
         Args:
@@ -844,7 +844,7 @@ class MacroMapDB:
         row = cursor.fetchone()
         return row["value"] if row else None
 
-    def setMeta(self, key: str, value: str) -> None:
+    def set_meta(self, key: str, value: str) -> None:
         """Set a meta value.
 
         Args:
@@ -862,103 +862,11 @@ class MacroMapDB:
             (key, value),
         )
 
-    def export(self) -> dict:
-        """Export the database as a plain dictionary.
-
-        Returns a dictionary representation of all tables.
-
-        Returns:
-            Dictionary with all database tables.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not loaded")
-
-        result: dict[str, Any] = {}
-
-        # Export meta
-        cursor = self._conn.cursor()
-        cursor.execute("SELECT key, value FROM meta")
-        result["meta"] = {}
-        for row in cursor.fetchall():
-            result["meta"][row["key"]] = row["value"]
-
-        # Export atom_types
-        result["atom_types"] = {}
-        cursor.execute("SELECT * FROM atom_types")
-        for row in cursor.fetchall():
-            result["atom_types"][row["hop3_key"]] = {
-                "element": row["element"],
-                "hop2_key": row["hop2_key"],
-                "hop1_key": row["hop1_key"],
-                "hop0_key": row["hop0_key"],
-                "lammps_type": row["lammps_type"],
-                "mass": row["mass"],
-                "sigma": row["sigma"],
-                "epsilon": row["epsilon"],
-                "source": json.loads(row["source"]),
-            }
-
-        # Export hop1_keymap
-        result["hop1_keymap"] = {}
-        cursor.execute("SELECT * FROM hop1_keymap")
-        for row in cursor.fetchall():
-            result["hop1_keymap"][row["hop1_key"]] = {
-                "hop0_key": row["hop0_key"],
-                "lammps_types": json.loads(row["lammps_types"]),
-            }
-
-        # Export hop0_keymap
-        result["hop0_keymap"] = {}
-        cursor.execute("SELECT * FROM hop0_keymap")
-        for row in cursor.fetchall():
-            result["hop0_keymap"][row["hop0_key"]] = {
-                "lammps_types": json.loads(row["lammps_types"]),
-            }
-
-        # Export bond_params
-        result["bond_params"] = {}
-        cursor.execute("SELECT * FROM bond_params")
-        for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"])
-            result["bond_params"][key] = {"k": row["k"], "r0": row["r0"]}
-
-        # Export angle_params
-        result["angle_params"] = {}
-        cursor.execute("SELECT * FROM angle_params")
-        for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"], row["hop0_key_c"])
-            result["angle_params"][key] = {"k": row["k"], "theta0": row["theta0"]}
-
-        # Export dihedral_params
-        result["dihedral_params"] = {}
-        cursor.execute("SELECT * FROM dihedral_params")
-        for row in cursor.fetchall():
-            key = (
-                row["hop0_key_a"],
-                row["hop0_key_b"],
-                row["hop0_key_c"],
-                row["hop0_key_d"],
-            )
-            result["dihedral_params"][key] = {"coeffs": json.loads(row["coeffs"])}
-
-        # Export improper_params
-        result["improper_params"] = {}
-        cursor.execute("SELECT * FROM improper_params")
-        for row in cursor.fetchall():
-            key = (
-                row["hop0_key_a"],
-                row["hop0_key_b"],
-                row["hop0_key_c"],
-                row["hop0_key_d"],
-            )
-            result["improper_params"][key] = {"coeffs": json.loads(row["coeffs"])}
-
-        return result
 
     # ── Property accessors ─────────────────────────────────────────────────────
 
     @property
-    def atomTypes(self) -> dict:
+    def atom_types(self) -> dict:
         """Get the atom_types table (hop3 level as finest classification).
 
         Returns:
@@ -987,7 +895,7 @@ class MacroMapDB:
         return result
 
     @property
-    def hop1Keymap(self) -> dict:
+    def hop1_keymap(self) -> dict:
         """Get the hop1_keymap table.
 
         Returns:
@@ -1006,7 +914,7 @@ class MacroMapDB:
         return result
 
     @property
-    def hop2Keymap(self) -> dict:
+    def hop2_keymap(self) -> dict:
         """Get the hop2_keymap table.
 
         Returns:
@@ -1025,7 +933,7 @@ class MacroMapDB:
         return result
 
     @property
-    def hop0Keymap(self) -> dict:
+    def hop0_keymap(self) -> dict:
         """Get the hop0_keymap table.
 
         Returns:
@@ -1044,7 +952,7 @@ class MacroMapDB:
         return result
 
     @property
-    def bondParams(self) -> dict:
+    def bond_params(self) -> dict:
         """Get the bond_params table.
 
         Returns:
@@ -1063,7 +971,7 @@ class MacroMapDB:
         return result
 
     @property
-    def angleParams(self) -> dict:
+    def angle_params(self) -> dict:
         """Get the angle_params table.
 
         Returns:
@@ -1082,7 +990,7 @@ class MacroMapDB:
         return result
 
     @property
-    def dihedralParams(self) -> dict:
+    def dihedral_params(self) -> dict:
         """Get the dihedral_params table.
 
         Returns:
@@ -1105,7 +1013,7 @@ class MacroMapDB:
         return result
 
     @property
-    def improperParams(self) -> dict:
+    def improper_params(self) -> dict:
         """Get the improper_params table.
 
         Returns:

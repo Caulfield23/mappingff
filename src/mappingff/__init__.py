@@ -2,6 +2,6 @@
 
 __version__ = "1.3.0"
 
-from mappingff.workflow import buildDb, parameterize
+from mappingff.workflow import build_db, parameterize
 
-__all__ = ["buildDb", "parameterize"]
+__all__ = ["build_db", "parameterize"]

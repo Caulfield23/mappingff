@@ -25,7 +25,7 @@ def _load():
 _load()
 
 
-def massToElement(mass: float, tolerance: float = 0.1) -> str | None:
+def mass_to_element(mass: float, tolerance: float = 0.1) -> str | None:
     """Find element symbol by mass within tolerance. Returns None if no match."""
     best, best_diff = None, float("inf")
     for elem, em in _MASSES.items():
@@ -35,7 +35,7 @@ def massToElement(mass: float, tolerance: float = 0.1) -> str | None:
     return best
 
 
-def lmpToRdkitMol(lmpData, tolerance: float = 0.1) -> Chem.Mol:
+def lmp_to_rdkit_mol(lmpData, tolerance: float = 0.1) -> Chem.Mol:
     """Convert LammpsData to RDKit Mol.
 
     1. type_id -> element (mass -> element via massToElement)
@@ -44,17 +44,17 @@ def lmpToRdkitMol(lmpData, tolerance: float = 0.1) -> Chem.Mol:
     4. Return sanitized Mol
     """
     # 1. type_id -> element
-    typeToElem = {}
-    for typeId, mass in lmpData.masses:
-        elem = massToElement(mass, tolerance)
+    type_to_elem = {}
+    for type_id, mass in lmpData.masses:
+        elem = mass_to_element(mass, tolerance)
         if elem is None:
-            raise ValueError(f"No element found for mass {mass} (type {typeId})")
-        typeToElem[typeId] = elem
+            raise ValueError(f"No element found for mass {mass} (type {type_id})")
+        type_to_elem[type_id] = elem
 
     # 2. Build RWMol
     mol = Chem.RWMol()
-    for atomId, molTag, typeId, charge, x, y, z in lmpData.atom_records:
-        atom = Chem.Atom(typeToElem[typeId])
+    for atom_id, mol_tag, type_id, charge, x, y, z in lmpData.atom_records:
+        atom = Chem.Atom(type_to_elem[type_id])
         atom.SetFormalCharge(int(round(charge)))
         mol.AddAtom(atom)
 
@@ -64,7 +64,7 @@ def lmpToRdkitMol(lmpData, tolerance: float = 0.1) -> Chem.Mol:
 
     # 3. Set coordinates
     conf = Chem.Conformer(len(lmpData.atom_records))
-    for i, (atomId, molTag, typeId, charge, x, y, z) in enumerate(lmpData.atom_records):
+    for i, (atom_id, mol_tag, type_id, charge, x, y, z) in enumerate(lmpData.atom_records):
         conf.SetAtomPosition(i, (x, y, z))
     mol.AddConformer(conf)
 
