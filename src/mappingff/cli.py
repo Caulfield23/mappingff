@@ -10,7 +10,6 @@ import argparse
 import logging
 from pathlib import Path
 
-from mappingff.utils import USER_DEFAULT_DB_PATH, setupLogging
 from mappingff.workflow import buildDb, parameterize
 
 
@@ -23,22 +22,20 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # build-db command
-    build_parser = sub.add_parser("build-db", help="Build parameter database from samples")
+    build_parser = sub.add_parser(
+        "build-db", help="Build parameter database from samples"
+    )
     build_parser.add_argument(
         "samples_dir",
         type=Path,
         help="Directory containing sample subdirectories with .mol and .lmp files",
     )
     build_parser.add_argument(
-        "-d", "--db",
+        "-d",
+        "--db",
         type=Path,
-        default=USER_DEFAULT_DB_PATH,
+        default=Path("samples.db"),
         help="Output database file path (default: samples.db)",
-    )
-    build_parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Print detailed progress",
     )
 
     # parameterize command
@@ -49,23 +46,27 @@ def main() -> None:
         help="Path to target molecule .mol or .pdb file",
     )
     param_parser.add_argument(
-        "-o", "--out",
+        "-o",
+        "--out",
         type=Path,
         help="Output LAMMPS file path (default: <mol_file>.lmp)",
     )
     param_parser.add_argument(
-        "-d", "--db",
+        "-d",
+        "--db",
         type=Path,
-        default=USER_DEFAULT_DB_PATH,
-        help="Path to database file (default: samples.db)",
+        default=None,
+        help="Path to database file (default: first .db file in mol_file's directory)",
     )
     param_parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Print detailed progress",
     )
     param_parser.add_argument(
-        "-c", "--charge",
+        "-c",
+        "--charge",
         type=float,
         default=None,
         help="Target total charge for the system (default: no adjustment)",
@@ -73,34 +74,54 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Setup logging
-    logLevel = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
-    setupLogging(logLevel)
-
     if args.command == "build-db":
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler(Path(args.db).parent / "build-db.log", mode="w"),
+            ],
+        )
         dbPath = args.db
-        result = buildDb(args.samples_dir, dbPath, args.verbose)
-        print(f"Build complete: {result['samples_count']} samples, {result['atoms_processed']} atoms")
+        buildDb(args.samples_dir, dbPath)
+        print(f"Database build complete!")
 
     elif args.command == "parameterize":
+        if args.out is None:
+            args.out = args.mol_file.with_suffix(".lmp")
+
+        if args.db is None:
+            db_files = list(args.mol_file.parent.glob("*.db"))
+            if db_files:
+                args.db = db_files[0]
+
+        logging.basicConfig(
+            level=logging.DEBUG if args.verbose else logging.INFO,
+            format="[%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler(
+                    Path(args.out).parent / "parameterize.log", mode="w"
+                ),
+            ],
+        )
+
         result = parameterize(
             args.mol_file,
             args.db,
             args.out,
-            args.verbose,
             args.charge,
         )
-        print(f"Parameterize complete: {result['atoms']} atoms, "
-              f"{result['bonds']} bonds, "
-              f"{result['angles']} angles, "
-              f"{result['dihedrals']} dihedrals, "
-              f"{result['impropers']} impropers, "
-              f"{result['unique_types']} types, "
-              f"hop3={result['hop3_matches']}, "
-              f"hop2={result['hop2_matches']}, "
-              f"hop1={result['hop1_matches']}, "
-              f"hop0={result['hop0_matches']}, "
-              f"no_match={result['no_match']}")
+        print(
+            f"Parameterize complete: {result['atoms']} atoms, "
+            f"{result['bonds']} bonds, {result['angles']} angles, "
+            f"{result['dihedrals']} dihedrals, {result['impropers']} impropers, "
+            f"{result['unique_types']} types, "
+            f"hop3={result['hop3_matches']}, hop2={result['hop2_matches']}, "
+            f"hop1={result['hop1_matches']}, hop0={result['hop0_matches']}, "
+            f"no_match={result['no_match']}"
+        )
 
 
 if __name__ == "__main__":

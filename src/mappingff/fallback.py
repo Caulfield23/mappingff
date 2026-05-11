@@ -5,19 +5,16 @@ a LAMMPS atom type for a target atom by progressively falling back through
 four levels of environment matching (all within atom_types table):
 
     1. hop3 exact match in atom_types (by hop3_key)
-    2. hop2 exact match in atom_types (by hop2_key)
-    3. hop1 match in atom_types (by hop1_key)
-    4. hop0 match in atom_types (by hop0_key)
+    2. hop2 fallback in atom_types (by hop2_key)
+    3. hop1 fallback in atom_types (by hop1_key)
+    4. hop0 fallback in atom_types (by hop0_key)
 
-If no match is found at any level, returns (None, None) to indicate failure.
+If no match is found at any level, returns (None, None, None, None) to indicate failure.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from mappingff.db import MacroMapDB
+from mappingff.db import MacroMapDB
 
 
 def resolveAtomType(
@@ -26,14 +23,14 @@ def resolveAtomType(
     hop1Key: str,
     hop0Key: str,
     db: MacroMapDB,
-) -> tuple[int | None, str | None]:
+) -> tuple[int | None, str | None, str | None, str | None]:
     """Resolve atom type with four-level fallback.
 
-    Tries each level in order by searching atom_types table:
-        1. hop3Key in atom_types -> exact match
-        2. hop2Key in atom_types -> exact match
-        3. hop1Key in atom_types (by hop1_key column)
-        4. hop0Key in atom_types (by hop0_key column)
+    Tries each level in order using SQL index lookups:
+        1. hop3_key = ? (primary key, O(1))
+        2. hop2_key = ? (index, O(log n))
+        3. hop1_key = ? (index, O(log n))
+        4. hop0_key = ? (index, O(log n))
 
     Args:
         hop3Key: SHA-256 key of hop3 environment.
@@ -43,27 +40,27 @@ def resolveAtomType(
         db: MacroMapDB instance with loaded database.
 
     Returns:
-        Tuple of (lammpsType, hop0Key) if found, (None, None) if no match.
+        Tuple of (lammpsType, hop0Key, hopLevel, matchedHop3Key) if found.
+        hopLevel is "hop3", "hop2", "hop1", or "hop0".
+        matchedHop3Key is the hop3_key from the matched database row.
+        Returns (None, None, None, None) if no match.
     """
-    # Level 1: hop3 exact match
-    for key, entry in db.atomTypes.items():
-        if entry.get("hop3_key") == hop3Key:
-            return entry["lammps_type"], entry["hop0_key"]
+    if db._conn is None:
+        raise RuntimeError("Database not loaded")
 
-    # Level 2: hop2 exact match
-    if hop2Key in db.atomTypes:
-        entry = db.atomTypes[hop2Key]
-        return entry["lammps_type"], entry["hop0_key"]
+    cursor = db._conn.cursor()
 
-    # Level 3: hop1 fallback - search by hop1_key column in atom_types
-    for key, entry in db.atomTypes.items():
-        if entry.get("hop1_key") == hop1Key:
-            return entry["lammps_type"], entry["hop0_key"]
+    for col, level_name, key in zip(
+        ["hop3_key", "hop2_key", "hop1_key", "hop0_key"],
+        ["hop3", "hop2", "hop1", "hop0"],
+        [hop3Key, hop2Key, hop1Key, hop0Key],
+    ):
+        cursor.execute(
+            f"SELECT lammps_type, hop0_key, hop3_key FROM atom_types WHERE {col} = ? LIMIT 1",
+            (key,),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row["lammps_type"], row["hop0_key"], level_name, row["hop3_key"]
 
-    # Level 4: hop0 fallback - search by hop0_key column in atom_types
-    for key, entry in db.atomTypes.items():
-        if entry.get("hop0_key") == hop0Key:
-            return entry["lammps_type"], entry["hop0_key"]
-
-    # No match found - return None to indicate failure
-    return None, None
+    return None, None, None, None

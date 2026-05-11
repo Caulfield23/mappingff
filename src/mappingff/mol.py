@@ -21,6 +21,8 @@ from rdkit import Chem
 from rdkit.Chem import SanitizeMol, rdchem, rdDetermineBonds
 
 from mappingff import encode
+from mappingff.lmp import parseLammps
+from mappingff.lmp2rdkitmol import lmpToRdkitMol
 
 
 class MolReader:
@@ -32,7 +34,7 @@ class MolReader:
 
     Attributes:
         _path: Path to the molecule file.
-        _mol: RDKit Mol object (None if parsing failed).
+        _mol: RDKit Mol object.
     """
 
     def __init__(self, path: Path):
@@ -42,7 +44,7 @@ class MolReader:
             path: Path to .mol or .pdb file.
         """
         self._path = Path(path)
-        self._mol: rdchem.Mol | None = None
+        self._mol: rdchem.Mol
         self._parse()
 
     def _parse(self) -> None:
@@ -56,54 +58,41 @@ class MolReader:
         and other computed properties are available.
         """
         text = self._path.read_text(encoding="utf-8")
-        # Remove OBJ3D blocks which newer RDKit versions reject
-        lines = text.splitlines()
-        skip = False
-        filtered_lines = []
-        for line in lines:
-            if "M  V30 BEGIN OBJ3D" in line:
-                skip = True
-                continue
-            if "M  V30 END OBJ3D" in line:
-                skip = False
-                continue
-            if not skip:
-                filtered_lines.append(line)
-        text = "\n".join(filtered_lines)
+
+        # Determine file type by extension and parse accordingly
         suffix = self._path.suffix.lower()
         if suffix == ".mol":
-            self._mol = Chem.MolFromMolBlock(text, sanitize=False)
+            # Remove OBJ3D blocks which newer RDKit versions reject
+            lines = text.splitlines()
+            lines = text.splitlines()
+            skip = False
+            filtered_lines = []
+            for line in lines:
+                if "M  V30 BEGIN OBJ3D" in line:
+                    skip = True
+                    continue
+                if "M  V30 END OBJ3D" in line:
+                    skip = False
+                    continue
+                if not skip:
+                    filtered_lines.append(line)
+            text = "\n".join(filtered_lines)
+            self._mol = Chem.MolFromMolBlock(text, sanitize=True, removeHs=False)
+
         elif suffix == ".pdb":
-            self._mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
-            if self._mol is not None:
-                rdDetermineBonds.DetermineBondOrders(self._mol, charge=0)
-        elif suffix == ".lmp":
-            from mappingff.lmp import parseLammps
-            from mappingff.lmp2rdkitmol import lmpToRdkitMol
-
-            lmpData = parseLammps(self._path)
-            self._mol = lmpToRdkitMol(lmpData)
-        else:
-            raise ValueError(f"Unsupported file format: {suffix}")
-
-        if self._mol is not None:
+            self._mol = Chem.MolFromPDBFile(
+                str(self._path), sanitize=False, removeHs=False
+            )
+            rdDetermineBonds.DetermineBondOrders(self._mol, charge=0)
             SanitizeMol(self._mol)
 
-        if self._mol is None:
-            raise ValueError(f"Failed to parse {self._path}")
+        elif suffix == ".lmp":
+            lmpData = parseLammps(self._path)
+            self._mol = lmpToRdkitMol(lmpData)
 
     @property
     def mol(self) -> rdchem.Mol:
-        """Get the RDKit Mol object.
-
-        Returns:
-            The RDKit molecule object.
-
-        Raises:
-            RuntimeError: If molecule not loaded.
-        """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
+        """Get the RDKit Mol object."""
         return self._mol
 
     def getAtoms(self) -> list[dict]:
@@ -127,30 +116,30 @@ class MolReader:
                 - aromatic: whether atom is aromatic (0 or 1)
                 - chiral_tag: chiral tag as string
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         ring_info = self._mol.GetRingInfo()
         atoms = []
         for i, rd_atom in enumerate(self._mol.GetAtoms()):
             # Count how many rings (of size 3-8) this atom participates in
             atom_ring_count = sum(
-                1 for ring_size in range(3, 9)
+                1
+                for ring_size in range(3, 9)
                 if ring_info.IsAtomInRingOfSize(i, ring_size)
             )
-            atoms.append({
-                "idx": i + 1,  # 1-based indexing for external use
-                "symbol": rd_atom.GetSymbol(),
-                "atomic_num": rd_atom.GetAtomicNum(),
-                "formal_charge": rd_atom.GetFormalCharge(),
-                "degree": rd_atom.GetTotalDegree(),
-                "hybridization": str(rd_atom.GetHybridization()),
-                "in_ring": int(rd_atom.IsInRing()),
-                "ring_count": atom_ring_count,
-                "total_hs": rd_atom.GetTotalNumHs(includeNeighbors=True),
-                "aromatic": int(rd_atom.GetIsAromatic()),
-                " chiral_tag": str(rd_atom.GetChiralTag()),
-            })
+            atoms.append(
+                {
+                    "idx": i + 1,  # 1-based indexing for external use
+                    "symbol": rd_atom.GetSymbol(),
+                    "atomic_num": rd_atom.GetAtomicNum(),
+                    "formal_charge": rd_atom.GetFormalCharge(),
+                    "degree": rd_atom.GetTotalDegree(),
+                    "hybridization": str(rd_atom.GetHybridization()),
+                    "in_ring": int(rd_atom.IsInRing()),
+                    "ring_count": atom_ring_count,
+                    "total_hs": rd_atom.GetTotalNumHs(includeNeighbors=True),
+                    "aromatic": int(rd_atom.GetIsAromatic()),
+                    "chiral_tag": str(rd_atom.GetChiralTag()),
+                }
+            )
         return atoms
 
     def getBonds(self) -> list[dict]:
@@ -164,18 +153,17 @@ class MolReader:
                 - bond_type: type as string (e.g., 'SINGLE', 'DOUBLE', 'AROMATIC')
                 - aromatic: whether bond is aromatic (0 or 1)
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         bonds = []
         for i, rd_bond in enumerate(self._mol.GetBonds()):
-            bonds.append({
-                "idx": i + 1,
-                "a1": rd_bond.GetBeginAtomIdx() + 1,  # 1-based
-                "a2": rd_bond.GetEndAtomIdx() + 1,    # 1-based
-                "bond_type": str(rd_bond.GetBondType()),
-                "aromatic": int(rd_bond.GetIsAromatic()),
-            })
+            bonds.append(
+                {
+                    "idx": i + 1,
+                    "a1": rd_bond.GetBeginAtomIdx() + 1,  # 1-based
+                    "a2": rd_bond.GetEndAtomIdx() + 1,  # 1-based
+                    "bond_type": str(rd_bond.GetBondType()),
+                    "aromatic": int(rd_bond.GetIsAromatic()),
+                }
+            )
         return bonds
 
     def getCoords(self) -> dict[int, tuple[float, float, float]]:
@@ -184,9 +172,6 @@ class MolReader:
         Returns:
             Dictionary mapping 1-based atom index to (x, y, z) tuple.
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         coords = {}
         conf = self._mol.GetConformer()
         for i in range(self._mol.GetNumAtoms()):
@@ -207,9 +192,6 @@ class MolReader:
                 - a2: 1-based index of center atom
                 - a3: 1-based index of third atom
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         angles = []
         angle_idx = 1
         for center_idx in range(self._mol.GetNumAtoms()):
@@ -223,12 +205,14 @@ class MolReader:
                     a1 = neighbors[i].GetIdx() + 1
                     a2 = center_idx + 1
                     a3 = neighbors[j].GetIdx() + 1
-                    angles.append({
-                        "idx": angle_idx,
-                        "a1": a1,
-                        "a2": a2,
-                        "a3": a3,
-                    })
+                    angles.append(
+                        {
+                            "idx": angle_idx,
+                            "a1": a1,
+                            "a2": a2,
+                            "a3": a3,
+                        }
+                    )
                     angle_idx += 1
         return angles
 
@@ -246,9 +230,6 @@ class MolReader:
                 - a3: 1-based index of third atom
                 - a4: 1-based index of fourth atom
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         dihedrals = []
         dih_idx = 1
         visited = set()
@@ -277,13 +258,15 @@ class MolReader:
                     if key in visited:
                         continue
                     visited.add(key)
-                    dihedrals.append({
-                        "idx": dih_idx,
-                        "a1": a1_idx + 1,
-                        "a2": a2_idx + 1,
-                        "a3": a3_idx + 1,
-                        "a4": a4_idx + 1,
-                    })
+                    dihedrals.append(
+                        {
+                            "idx": dih_idx,
+                            "a1": a1_idx + 1,
+                            "a2": a2_idx + 1,
+                            "a3": a3_idx + 1,
+                            "a4": a4_idx + 1,
+                        }
+                    )
                     dih_idx += 1
         return dihedrals
 
@@ -302,9 +285,6 @@ class MolReader:
                 - a3: 1-based index of third atom
                 - a4: 1-based index of fourth atom
         """
-        if self._mol is None:
-            raise RuntimeError("Molecule not loaded")
-
         from itertools import combinations
 
         impropers = []
@@ -327,13 +307,15 @@ class MolReader:
                     continue
                 visited.add(key)
 
-                impropers.append({
-                    "idx": imp_idx,
-                    "a1": center_idx + 1,
-                    "a2": a + 1,
-                    "a3": b + 1,
-                    "a4": c + 1,
-                })
+                impropers.append(
+                    {
+                        "idx": imp_idx,
+                        "a1": center_idx + 1,
+                        "a2": a + 1,
+                        "a3": b + 1,
+                        "a4": c + 1,
+                    }
+                )
                 imp_idx += 1
 
         return impropers
@@ -352,8 +334,5 @@ def computeHopKeys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, s
     Returns:
         Tuple of (hop3Key, hop2Key, hop1Key, hop0Key), all 64-char hex strings.
     """
-    if molReader._mol is None:
-        raise RuntimeError("Molecule not loaded")
-
     rd_atom = molReader._mol.GetAtomWithIdx(atomIdx - 1)
     return encode.computeGraphHopKeys(molReader._mol, rd_atom)

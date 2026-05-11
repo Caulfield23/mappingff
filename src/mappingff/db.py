@@ -48,6 +48,20 @@ class MacroMapDB:
         self._conn.row_factory = sqlite3.Row
         self._initSchema()
 
+        # Migrate indexes for existing databases
+        for idx_name, col in [
+            ("idx_atom_types_hop2", "hop2_key"),
+            ("idx_atom_types_hop1", "hop1_key"),
+            ("idx_atom_types_hop0", "hop0_key"),
+        ]:
+            cursor = self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+                (idx_name,),
+            )
+            if cursor.fetchone() is None:
+                self._conn.execute(f"CREATE INDEX {idx_name} ON atom_types({col})")
+        self._conn.commit()
+
     def save(self) -> None:
         """Save database to SQLite file.
 
@@ -68,7 +82,9 @@ class MacroMapDB:
         if self._conn is None:
             raise RuntimeError("Database not loaded")
         cursor = self._conn.cursor()
-        cursor.execute("SELECT hop3_key, sigma_list, epsilon_list, charge_list FROM atom_types")
+        cursor.execute(
+            "SELECT hop3_key, sigma_list, epsilon_list, charge_list FROM atom_types"
+        )
         for row in cursor.fetchall():
             sigma_list = json.loads(row["sigma_list"])
             epsilon_list = json.loads(row["epsilon_list"])
@@ -76,11 +92,14 @@ class MacroMapDB:
             avg_sigma = round(sum(sigma_list) / len(sigma_list), 7)
             avg_epsilon = round(sum(epsilon_list) / len(epsilon_list), 3)
             avg_charge = round(sum(charge_list) / len(charge_list), 6)
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE atom_types
                 SET sigma = ?, epsilon = ?, charge = ?
                 WHERE hop3_key = ?
-            """, (avg_sigma, avg_epsilon, avg_charge, row["hop3_key"]))
+            """,
+                (avg_sigma, avg_epsilon, avg_charge, row["hop3_key"]),
+            )
 
     def _finalizeBondedParams(self) -> None:
         """Compute averaged bonded parameters from lists and update scalar columns."""
@@ -103,8 +122,10 @@ class MacroMapDB:
                 else:
                     avg_val = round(sum(vals) / len(vals), 3)
                 averaged.append(avg_val)
-            cursor.execute("UPDATE bond_params SET coeffs = ? WHERE rowid = ?",
-                           (json.dumps(averaged), row["rowid"]))
+            cursor.execute(
+                "UPDATE bond_params SET coeffs = ? WHERE rowid = ?",
+                (json.dumps(averaged), row["rowid"]),
+            )
 
         # Angle params
         cursor.execute("SELECT rowid, coeffs_list FROM angle_params")
@@ -118,8 +139,10 @@ class MacroMapDB:
                 vals = [c[i] for c in coeffs_list]
                 avg_val = round(sum(vals) / len(vals), 3)
                 averaged.append(avg_val)
-            cursor.execute("UPDATE angle_params SET coeffs = ? WHERE rowid = ?",
-                           (json.dumps(averaged), row["rowid"]))
+            cursor.execute(
+                "UPDATE angle_params SET coeffs = ? WHERE rowid = ?",
+                (json.dumps(averaged), row["rowid"]),
+            )
 
         # Dihedral params
         cursor.execute("SELECT rowid, coeffs_list FROM dihedral_params")
@@ -134,8 +157,10 @@ class MacroMapDB:
                 vals = [c[i] for c in coeffs_list]
                 avg_val = round(sum(vals) / len(vals), 3)
                 averaged.append(avg_val)
-            cursor.execute("UPDATE dihedral_params SET coeffs = ? WHERE rowid = ?",
-                           (json.dumps(averaged), row["rowid"]))
+            cursor.execute(
+                "UPDATE dihedral_params SET coeffs = ? WHERE rowid = ?",
+                (json.dumps(averaged), row["rowid"]),
+            )
 
         # Improper params: last two fields are categorical indices (mode, not average)
         cursor.execute("SELECT rowid, coeffs_list FROM improper_params")
@@ -152,7 +177,9 @@ class MacroMapDB:
 
             # 2. Get most common pair (if tie, most_common returns first by insertion order)
             max_count = max(last_two_counts.values())
-            most_common_pairs = [k for k, v in last_two_counts.items() if v == max_count]
+            most_common_pairs = [
+                k for k, v in last_two_counts.items() if v == max_count
+            ]
             mode_last_two = most_common_pairs[0]
 
             # 3. Filter records sharing the mode
@@ -164,8 +191,10 @@ class MacroMapDB:
 
             # 4. Result = [avg_first] + mode_last_two
             averaged = [avg_first] + list(mode_last_two)
-            cursor.execute("UPDATE improper_params SET coeffs = ? WHERE rowid = ?",
-                           (json.dumps(averaged), row["rowid"]))
+            cursor.execute(
+                "UPDATE improper_params SET coeffs = ? WHERE rowid = ?",
+                (json.dumps(averaged), row["rowid"]),
+            )
 
     def close(self) -> None:
         """Close the database connection."""
@@ -209,6 +238,17 @@ class MacroMapDB:
                 hop3_graph TEXT
             )
         """)
+
+        # Indexes for faster hop key lookups in fallback resolution
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_atom_types_hop2 ON atom_types(hop2_key)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_atom_types_hop1 ON atom_types(hop1_key)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_atom_types_hop0 ON atom_types(hop0_key)"
+        )
 
         # hop1 keymap (for external validation only)
         cursor.execute("""
@@ -287,16 +327,16 @@ class MacroMapDB:
 
     # ── atom_types operations (hop3 level) ─────────────────────────────────────
 
-    def insertAtomType(self, hop3Key: str, info: dict) -> None:
+    def insertAtomType(self, info: dict) -> None:
         """Insert or update an atom type entry at hop3 level (finest classification).
 
-        If hop3Key already exists, merge sigma_list, epsilon_list, and source list.
-        If hop3Key is new, assign a unique lammps_type.
+        If hop3_key already exists, merge sigma_list, epsilon_list, charge_list, and source.
+        If hop3_key is new, assign a unique lammps_type.
 
         Args:
-            hop3Key: SHA-256 key computed from hop3 environment (finest level).
-            info: Dictionary containing element, hop1_key, hop0_key, hop2_key,
-                  hop0_graph, hop3_graph, mass, sigma, epsilon, source.
+            info: Dictionary containing hop3_key, hop2_key, hop1_key, hop0_key,
+                  element, hop0_graph, hop3_graph, mass, sigma, epsilon, charge,
+                  source.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -304,7 +344,9 @@ class MacroMapDB:
         cursor = self._conn.cursor()
 
         # Check if hop3Key already exists
-        cursor.execute("SELECT * FROM atom_types WHERE hop3_key = ?", (hop3Key,))
+        cursor.execute(
+            "SELECT * FROM atom_types WHERE hop3_key = ?", (info["hop3_key"],)
+        )
         existing = cursor.fetchone()
 
         if existing is not None:
@@ -317,13 +359,22 @@ class MacroMapDB:
             new_sigma = existing_sigma + [info["sigma"]]
             new_epsilon = existing_epsilon + [info["epsilon"]]
             new_charge = existing_charge + [info["charge"]]
-            new_sources = list(set(existing_sources) | set(info["source"]))
+            new_sources = existing_sources + [info["source"]]
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE atom_types
                 SET epsilon_list = ?, sigma_list = ?, charge_list = ?, source = ?
                 WHERE hop3_key = ?
-            """, (json.dumps(new_epsilon), json.dumps(new_sigma), json.dumps(new_charge), json.dumps(new_sources), hop3Key))
+            """,
+                (
+                    json.dumps(new_epsilon),
+                    json.dumps(new_sigma),
+                    json.dumps(new_charge),
+                    json.dumps(new_sources),
+                    info["hop3_key"],
+                ),
+            )
         else:
             # hop3Key is new - get next available lammps_type
             cursor.execute("SELECT MAX(lammps_type) FROM atom_types")
@@ -331,30 +382,34 @@ class MacroMapDB:
             max_type = row[0] if row[0] is not None else 0
             new_lammps_type = max_type + 1
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO atom_types
-                (hop3_key, hop2_key, element, hop1_key, hop0_key, lammps_type,
-                 mass, sigma, epsilon, sigma_list, epsilon_list,
-                 charge, charge_list, source, hop0_graph, hop3_graph)
+                (lammps_type, element, mass, sigma, sigma_list,
+                 epsilon, epsilon_list, charge, charge_list,
+                 source, hop3_key, hop2_key, hop1_key, hop0_key,
+                 hop0_graph, hop3_graph)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                hop3Key,
-                info.get("hop2_key"),
-                info["element"],
-                info["hop1_key"],
-                info["hop0_key"],
-                new_lammps_type,
-                round(info["mass"], 3),
-                round(info["sigma"], 7),
-                round(info["epsilon"], 3),
-                json.dumps([round(info["sigma"], 7)]),
-                json.dumps([round(info["epsilon"], 3)]),
-                round(info.get("charge", 0.0), 6),
-                json.dumps([round(info.get("charge", 0.0), 6)]),
-                json.dumps(info["source"]),
-                json.dumps(info.get("hop0_graph", {})),
-                json.dumps(info.get("hop3_graph", {})),
-            ))
+            """,
+                (
+                    new_lammps_type,
+                    info["element"],
+                    round(info["mass"], 3),
+                    round(info["sigma"], 7),
+                    json.dumps([round(info["sigma"], 7)]),
+                    round(info["epsilon"], 3),
+                    json.dumps([round(info["epsilon"], 3)]),
+                    round(info.get("charge", 0.0), 6),
+                    json.dumps([round(info["charge"], 6)]),
+                    json.dumps([info["source"]]),
+                    info["hop3_key"],
+                    info["hop2_key"],
+                    info["hop1_key"],
+                    info["hop0_key"],
+                    json.dumps(info["hop0_graph"]),
+                    json.dumps(info["hop3_graph"]),
+                ),
+            )
 
     def getAtomType(self, hop3Key: str) -> dict | None:
         """Retrieve an atom type entry by hop3 key.
@@ -392,105 +447,39 @@ class MacroMapDB:
             "hop0_env": json.loads(row["hop0_graph"]) if row["hop0_graph"] else {},
         }
 
-    # ── hop1_keymap operations ─────────────────────────────────────────────────
-
-    def insertHop1Key(self, hop1Key: str, lammpsType: int) -> None:
-        """Insert or update a hop1_keymap entry.
-
-        The hop1_keymap provides hop1-level fallback for atom typing.
-        Multiple hop2 entries may map to the same hop1 key, so lammps_types
-        is stored as a list to track all possible types.
+    def insertHopKey(self, hopKeys: list[str], lammpsType: int) -> None:
+        """Insert or update hop0/1/2 keymap entries.
 
         Args:
-            hop1Key: SHA-256 key computed from hop1 environment.
+            hopKeys: List of [hop0_key, hop1_key, hop2_key].
             lammpsType: LAMMPS atom type ID.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("SELECT lammps_types FROM hop1_keymap WHERE hop1_key = ?", (hop1Key,))
-        row = cursor.fetchone()
+        for level, hopKey in enumerate(hopKeys):
+            table = f"hop{level}_keymap"
+            key_col = f"hop{level}_key"
+            cursor.execute(
+                f"SELECT lammps_types FROM {table} WHERE {key_col} = ?", (hopKey,)
+            )
+            row = cursor.fetchone()
 
-        if row is not None:
-            lammps_types = json.loads(row["lammps_types"])
-            if lammpsType not in lammps_types:
-                lammps_types.append(lammpsType)
-                lammps_types.sort()
-            cursor.execute("""
-                UPDATE hop1_keymap SET lammps_types = ? WHERE hop1_key = ?
-            """, (json.dumps(lammps_types), hop1Key))
-        else:
-            cursor.execute("""
-                INSERT INTO hop1_keymap (hop1_key, lammps_types)
-                VALUES (?, ?)
-            """, (hop1Key, json.dumps([lammpsType])))
-
-    def insertHop2Key(self, hop2Key: str, lammpsType: int) -> None:
-        """Insert or update a hop2_keymap entry.
-
-        The hop2_keymap provides hop2-level fallback for atom typing.
-        Multiple hop3 entries may map to the same hop2 key, so lammps_types
-        is stored as a list to track all possible types.
-
-        Args:
-            hop2Key: SHA-256 key computed from hop2 environment.
-            lammpsType: LAMMPS atom type ID.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not loaded")
-
-        cursor = self._conn.cursor()
-        cursor.execute("SELECT lammps_types FROM hop2_keymap WHERE hop2_key = ?", (hop2Key,))
-        row = cursor.fetchone()
-
-        if row is not None:
-            lammps_types = json.loads(row["lammps_types"])
-            if lammpsType not in lammps_types:
-                lammps_types.append(lammpsType)
-                lammps_types.sort()
-            cursor.execute("""
-                UPDATE hop2_keymap SET lammps_types = ? WHERE hop2_key = ?
-            """, (json.dumps(lammps_types), hop2Key))
-        else:
-            cursor.execute("""
-                INSERT INTO hop2_keymap (hop2_key, lammps_types)
-                VALUES (?, ?)
-            """, (hop2Key, json.dumps([lammpsType])))
-
-    # ── hop0_keymap operations ────────────────────────────────────────────────
-
-    def insertHop0Key(self, hop0Key: str, lammpsType: int) -> None:
-        """Insert or update a hop0_keymap entry.
-
-        The hop0_keymap provides hop0-level fallback for atom typing.
-        Multiple hop2/hop1 entries may map to the same hop0 key, so
-        lammps_types is stored as a list.
-
-        Args:
-            hop0Key: SHA-256 key computed from hop0 environment.
-            lammpsType: LAMMPS atom type ID from a sample.
-        """
-        if self._conn is None:
-            raise RuntimeError("Database not loaded")
-
-        cursor = self._conn.cursor()
-        cursor.execute("SELECT lammps_types FROM hop0_keymap WHERE hop0_key = ?", (hop0Key,))
-        row = cursor.fetchone()
-
-        if row is not None:
-            lammps_types = json.loads(row["lammps_types"])
-            if lammpsType not in lammps_types:
-                lammps_types.append(lammpsType)
-                lammps_types.sort()
-            cursor.execute("""
-                UPDATE hop0_keymap SET lammps_types = ? WHERE hop0_key = ?
-            """, (json.dumps(lammps_types), hop0Key))
-        else:
-            cursor.execute("""
-                INSERT INTO hop0_keymap (hop0_key, lammps_types)
-                VALUES (?, ?)
-            """, (hop0Key, json.dumps([lammpsType])))
+            if row is not None:
+                lammps_types = json.loads(row["lammps_types"])
+                if lammpsType not in lammps_types:
+                    lammps_types.append(lammpsType)
+                    lammps_types.sort()
+                cursor.execute(
+                    f"UPDATE {table} SET lammps_types = ? WHERE {key_col} = ?",
+                    (json.dumps(lammps_types), hopKey),
+                )
+            else:
+                cursor.execute(
+                    f"INSERT INTO {table} ({key_col}, lammps_types) VALUES (?, ?)",
+                    (hopKey, json.dumps([lammpsType])),
+                )
 
     # ── Bonded parameter operations ───────────────────────────────────────────
 
@@ -508,24 +497,33 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT coeffs_list FROM bond_params WHERE hop0_key_a = ? AND hop0_key_b = ?
-        """, (key[0], key[1]))
+        """,
+            (key[0], key[1]),
+        )
         row = cursor.fetchone()
 
         new_coeff = [round(params["k"], 4), round(params["r0"], 4)]
         if row is not None:
             coeffs_list = json.loads(row["coeffs_list"])
             coeffs_list.append(new_coeff)
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE bond_params SET coeffs_list = ?
                 WHERE hop0_key_a = ? AND hop0_key_b = ?
-            """, (json.dumps(coeffs_list), key[0], key[1]))
+            """,
+                (json.dumps(coeffs_list), key[0], key[1]),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO bond_params (hop0_key_a, hop0_key_b, coeffs, coeffs_list)
                 VALUES (?, ?, ?, ?)
-            """, (key[0], key[1], json.dumps(new_coeff), json.dumps([new_coeff])))
+            """,
+                (key[0], key[1], json.dumps(new_coeff), json.dumps([new_coeff])),
+            )
 
     def lookupBondParam(self, hop0KeyA: str, hop0KeyB: str) -> dict | None:
         """Look up bond parameter by hop0 key pair.
@@ -543,15 +541,13 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        if hop0KeyA <= hop0KeyB:
-            cursor.execute("""
-                SELECT coeffs FROM bond_params WHERE hop0_key_a = ? AND hop0_key_b = ?
-            """, (hop0KeyA, hop0KeyB))
-        else:
-            cursor.execute("""
-                SELECT coeffs FROM bond_params WHERE hop0_key_a = ? AND hop0_key_b = ?
-            """, (hop0KeyB, hop0KeyA))
+        keyA, keyB = sorted([hop0KeyA, hop0KeyB])
+        cursor.execute(
+            "SELECT coeffs FROM bond_params WHERE hop0_key_a = ? AND hop0_key_b = ?",
+            (keyA, keyB),
+        )
         row = cursor.fetchone()
+
         if row is None:
             return None
         coeffs = json.loads(row["coeffs"])
@@ -571,28 +567,44 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT coeffs_list FROM angle_params
             WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
-        """, (key[0], key[1], key[2]))
+        """,
+            (key[0], key[1], key[2]),
+        )
         row = cursor.fetchone()
 
         new_coeff = [round(params["k"], 3), round(params["theta0"], 3)]
         if row is not None:
             coeffs_list = json.loads(row["coeffs_list"])
             coeffs_list.append(new_coeff)
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE angle_params SET coeffs_list = ?
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
-            """, (json.dumps(coeffs_list), key[0], key[1], key[2]))
+            """,
+                (json.dumps(coeffs_list), key[0], key[1], key[2]),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO angle_params (hop0_key_a, hop0_key_b, hop0_key_c, coeffs, coeffs_list)
                 VALUES (?, ?, ?, ?, ?)
-            """, (key[0], key[1], key[2],
-                  json.dumps(new_coeff), json.dumps([new_coeff])))
+            """,
+                (
+                    key[0],
+                    key[1],
+                    key[2],
+                    json.dumps(new_coeff),
+                    json.dumps([new_coeff]),
+                ),
+            )
 
-    def lookupAngleParam(self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str) -> dict | None:
+    def lookupAngleParam(
+        self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str
+    ) -> dict | None:
         """Look up angle parameter by hop0 key triple.
 
         The center atom (B) is fixed, outer atoms (A and C) can be swapped.
@@ -610,15 +622,21 @@ class MacroMapDB:
 
         cursor = self._conn.cursor()
         if hop0KeyA <= hop0KeyC:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT coeffs FROM angle_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
-            """, (hop0KeyA, hop0KeyB, hop0KeyC))
+            """,
+                (hop0KeyA, hop0KeyB, hop0KeyC),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT coeffs FROM angle_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
-            """, (hop0KeyC, hop0KeyB, hop0KeyA))
+            """,
+                (hop0KeyC, hop0KeyB, hop0KeyA),
+            )
         row = cursor.fetchone()
         if row is None:
             return None
@@ -639,10 +657,13 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT coeffs_list FROM dihedral_params
             WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-        """, (key[0], key[1], key[2], key[3]))
+        """,
+            (key[0], key[1], key[2], key[3]),
+        )
         row = cursor.fetchone()
 
         new_coeffs = params.get("coeffs", [])
@@ -650,17 +671,28 @@ class MacroMapDB:
         if row is not None:
             coeffs_list = json.loads(row["coeffs_list"])
             coeffs_list.append(rounded)
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE dihedral_params SET coeffs_list = ?
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, (json.dumps(coeffs_list), key[0], key[1], key[2], key[3]))
+            """,
+                (json.dumps(coeffs_list), key[0], key[1], key[2], key[3]),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO dihedral_params (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d, coeffs, coeffs_list)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (key[0], key[1], key[2], key[3],
-                  json.dumps(rounded),
-                  json.dumps([rounded])))
+            """,
+                (
+                    key[0],
+                    key[1],
+                    key[2],
+                    key[3],
+                    json.dumps(rounded),
+                    json.dumps([rounded]),
+                ),
+            )
 
     def lookupDihedralParam(
         self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
@@ -687,15 +719,21 @@ class MacroMapDB:
         key_normal = (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
         key_reversed = (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA)
         if key_reversed < key_normal:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT coeffs FROM dihedral_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, key_reversed)
+            """,
+                key_reversed,
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT coeffs FROM dihedral_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, key_normal)
+            """,
+                key_normal,
+            )
         row = cursor.fetchone()
         if row is None:
             return None
@@ -715,28 +753,45 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT coeffs_list FROM improper_params
             WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-        """, (key[0], key[1], key[2], key[3]))
+        """,
+            (key[0], key[1], key[2], key[3]),
+        )
         row = cursor.fetchone()
 
         new_coeffs = params.get("coeffs", [])
-        rounded = [round(c, 3) for c in new_coeffs[:-2]] + [int(new_coeffs[-2]), int(new_coeffs[-1])]
+        rounded = [round(c, 3) for c in new_coeffs[:-2]] + [
+            int(new_coeffs[-2]),
+            int(new_coeffs[-1]),
+        ]
         if row is not None:
             coeffs_list = json.loads(row["coeffs_list"])
             coeffs_list.append(rounded)
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE improper_params SET coeffs_list = ?
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-            """, (json.dumps(coeffs_list), key[0], key[1], key[2], key[3]))
+            """,
+                (json.dumps(coeffs_list), key[0], key[1], key[2], key[3]),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO improper_params (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d, coeffs, coeffs_list)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (key[0], key[1], key[2], key[3],
-                  json.dumps(rounded),
-                  json.dumps([rounded])))
+            """,
+                (
+                    key[0],
+                    key[1],
+                    key[2],
+                    key[3],
+                    json.dumps(rounded),
+                    json.dumps([rounded]),
+                ),
+            )
 
     def lookupImproperParam(
         self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
@@ -760,10 +815,13 @@ class MacroMapDB:
 
         cursor = self._conn.cursor()
         others = sorted([hop0KeyB, hop0KeyC, hop0KeyD])
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT coeffs FROM improper_params
             WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
-        """, (hop0KeyA, others[0], others[1], others[2]))
+        """,
+            (hop0KeyA, others[0], others[1], others[2]),
+        )
         row = cursor.fetchone()
         if row is None:
             return None
@@ -797,9 +855,12 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)
-        """, (key, value))
+        """,
+            (key, value),
+        )
 
     def export(self) -> dict:
         """Export the database as a plain dictionary.
@@ -872,14 +933,24 @@ class MacroMapDB:
         result["dihedral_params"] = {}
         cursor.execute("SELECT * FROM dihedral_params")
         for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"], row["hop0_key_c"], row["hop0_key_d"])
+            key = (
+                row["hop0_key_a"],
+                row["hop0_key_b"],
+                row["hop0_key_c"],
+                row["hop0_key_d"],
+            )
             result["dihedral_params"][key] = {"coeffs": json.loads(row["coeffs"])}
 
         # Export improper_params
         result["improper_params"] = {}
         cursor.execute("SELECT * FROM improper_params")
         for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"], row["hop0_key_c"], row["hop0_key_d"])
+            key = (
+                row["hop0_key_a"],
+                row["hop0_key_b"],
+                row["hop0_key_c"],
+                row["hop0_key_d"],
+            )
             result["improper_params"][key] = {"coeffs": json.loads(row["coeffs"])}
 
         return result
@@ -1024,7 +1095,12 @@ class MacroMapDB:
         result: dict[tuple, dict] = {}
         cursor.execute("SELECT * FROM dihedral_params")
         for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"], row["hop0_key_c"], row["hop0_key_d"])
+            key = (
+                row["hop0_key_a"],
+                row["hop0_key_b"],
+                row["hop0_key_c"],
+                row["hop0_key_d"],
+            )
             result[key] = {"coeffs": json.loads(row["coeffs"])}
         return result
 
@@ -1042,6 +1118,11 @@ class MacroMapDB:
         result: dict[tuple, dict] = {}
         cursor.execute("SELECT * FROM improper_params")
         for row in cursor.fetchall():
-            key = (row["hop0_key_a"], row["hop0_key_b"], row["hop0_key_c"], row["hop0_key_d"])
+            key = (
+                row["hop0_key_a"],
+                row["hop0_key_b"],
+                row["hop0_key_c"],
+                row["hop0_key_d"],
+            )
             result[key] = {"coeffs": json.loads(row["coeffs"])}
         return result

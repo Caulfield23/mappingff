@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mappingff.db import MacroMapDB
+
 
 @dataclass
 class LammpsData:
@@ -62,6 +64,7 @@ class LammpsData:
         dihedral_records: List of (dih_id, dih_type, a1, a2, a3, a4).
         improper_records: List of (imp_id, imp_type, a1, a2, a3, a4).
     """
+
     header_comment: str = ""
     atoms: int = 0
     bonds: int = 0
@@ -85,14 +88,22 @@ class LammpsData:
     pair_coeffs: list[tuple[int, float, float]] = field(default_factory=list)
     bond_coeffs: list[tuple[int, float, float]] = field(default_factory=list)
     angle_coeffs: list[tuple[int, float, float]] = field(default_factory=list)
-    dihedral_coeffs: list[tuple[int, float, float, float, float]] = field(default_factory=list)
-    improper_coeffs: list[tuple[int, ...]] = field(default_factory=list)
+    dihedral_coeffs: list[tuple[int, float, float, float, float]] = field(
+        default_factory=list
+    )
+    improper_coeffs: list[tuple[int, float, int, int]] = field(default_factory=list)
 
-    atom_records: list[tuple[int, int, int, float, float, float, float]] = field(default_factory=list)
+    atom_records: list[tuple[int, int, int, float, float, float, float]] = field(
+        default_factory=list
+    )
     bond_records: list[tuple[int, int, int, int]] = field(default_factory=list)
     angle_records: list[tuple[int, int, int, int, int]] = field(default_factory=list)
-    dihedral_records: list[tuple[int, int, int, int, int, int]] = field(default_factory=list)
-    improper_records: list[tuple[int, int, int, int, int, int]] = field(default_factory=list)
+    dihedral_records: list[tuple[int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
+    improper_records: list[tuple[int, int, int, int, int, int]] = field(
+        default_factory=list
+    )
 
 
 # LAMMPS section header patterns
@@ -134,111 +145,106 @@ def parseLammps(path: Path) -> LammpsData:
 
     # Parse counts section
     while i < len(lines):
-        line = lines[i].strip()
+        line = lines[i]
+        if "#" in line:
+            line = line[: line.index("#")].strip()
+        else:
+            line = line.strip()
         if not line:
             i += 1
             continue
 
-        # Check if we've reached a section header
+        # Section header
         if line in _SECTION_HEADERS:
             current_section = line.lower().replace(" ", "_")
             i += 1
-            break
+            continue
 
-        # Parse count lines
-        parts = line.split()
-        if len(parts) >= 2:
-            try:
-                count = int(parts[0])
-            except ValueError:
-                # Box dimension line
+        if current_section is None:
+            # Header section: counts, types, box dimensions
+            parts = line.split()
+            if len(parts) >= 2:
                 try:
-                    if parts[2] == "xlo" and parts[3] == "xhi":
-                        data.xlo, data.xhi = float(parts[0]), float(parts[1])
-                    elif parts[2] == "ylo" and parts[3] == "yhi":
-                        data.ylo, data.yhi = float(parts[0]), float(parts[1])
-                    elif parts[2] == "zlo" and parts[3] == "zhi":
-                        data.zlo, data.zhi = float(parts[0]), float(parts[1])
-                except (ValueError, IndexError):
-                    pass
-                i += 1
-                continue
+                    count = int(parts[0])
+                except ValueError:
+                    try:
+                        if parts[2] == "xlo" and parts[3] == "xhi":
+                            data.xlo, data.xhi = float(parts[0]), float(parts[1])
+                        elif parts[2] == "ylo" and parts[3] == "yhi":
+                            data.ylo, data.yhi = float(parts[0]), float(parts[1])
+                        elif parts[2] == "zlo" and parts[3] == "zhi":
+                            data.zlo, data.zhi = float(parts[0]), float(parts[1])
+                    except (ValueError, IndexError):
+                        pass
+                    i += 1
+                    continue
 
-            key = parts[1]
-            if key == "atoms":
-                data.atoms = count
-            elif key == "bonds":
-                data.bonds = count
-            elif key == "angles":
-                data.angles = count
-            elif key == "dihedrals":
-                data.dihedrals = count
-            elif key == "impropers":
-                data.impropers = count
-            elif key == "types":
-                # Find previous non-empty line for context
-                prev_line = ""
-                for j in range(i - 1, -1, -1):
-                    if lines[j].strip():
-                        prev_line = lines[j].strip()
-                        break
-                if "atom" in prev_line:
-                    data.atom_types = count
-                elif "bond" in prev_line:
-                    data.bond_types = count
-                elif "angle" in prev_line:
-                    data.angle_types = count
-                elif "dihedral" in prev_line:
-                    data.dihedral_types = count
-                elif "improper" in prev_line:
-                    data.improper_types = count
-            elif len(parts) >= 3 and parts[2] == "types":
-                if parts[1] == "atom":
-                    data.atom_types = count
-                elif parts[1] == "bond":
-                    data.bond_types = count
-                elif parts[1] == "angle":
-                    data.angle_types = count
-                elif parts[1] == "dihedral":
-                    data.dihedral_types = count
-                elif parts[1] == "improper":
-                    data.improper_types = count
-
-        i += 1
-
-    # Parse remaining sections
-    while i < len(lines):
-        line = lines[i].strip()
-        if not line:
-            i += 1
-            continue
-
-        if line in _SECTION_HEADERS:
-            current_section = line.lower().replace(" ", "_")
-            i += 1
-            continue
-
-        if current_section:
-            parts = _parseDataLine(line)
-            if parts is not None:
+                key = parts[1]
+                if key == "atoms":
+                    data.atoms = count
+                elif key == "bonds":
+                    data.bonds = count
+                elif key == "angles":
+                    data.angles = count
+                elif key == "dihedrals":
+                    data.dihedrals = count
+                elif key == "impropers":
+                    data.impropers = count
+                elif len(parts) == 3 and parts[2] == "types":
+                    if parts[1] == "atom":
+                        data.atom_types = count
+                    elif parts[1] == "bond":
+                        data.bond_types = count
+                    elif parts[1] == "angle":
+                        data.angle_types = count
+                    elif parts[1] == "dihedral":
+                        data.dihedral_types = count
+                    elif parts[1] == "improper":
+                        data.improper_types = count
+        else:
+            # Section data
+            parts = line.split()
+            if parts:
                 if current_section == "masses":
                     data.masses.append((int(parts[0]), float(parts[1])))
                 elif current_section == "pair_coeffs":
-                    data.pair_coeffs.append((int(parts[0]), float(parts[1]), float(parts[2])))
+                    data.pair_coeffs.append(
+                        (int(parts[0]), float(parts[1]), float(parts[2]))
+                    )
                 elif current_section == "bond_coeffs":
-                    data.bond_coeffs.append((int(parts[0]), float(parts[1]), float(parts[2])))
+                    data.bond_coeffs.append(
+                        (int(parts[0]), float(parts[1]), float(parts[2]))
+                    )
                 elif current_section == "angle_coeffs":
-                    data.angle_coeffs.append((int(parts[0]), float(parts[1]), float(parts[2])))
+                    data.angle_coeffs.append(
+                        (int(parts[0]), float(parts[1]), float(parts[2]))
+                    )
                 elif current_section == "dihedral_coeffs":
-                    vals = [float(x) for x in parts]
-                    data.dihedral_coeffs.append(tuple([int(parts[0])] + vals[1:]))  # type: ignore
+                    data.dihedral_coeffs.append(
+                        (
+                            int(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]),
+                            float(parts[3]),
+                            float(parts[4]),
+                        )
+                    )
                 elif current_section == "improper_coeffs":
-                    data.improper_coeffs.append(tuple(float(x) for x in parts))
+                    data.improper_coeffs.append(
+                        (int(parts[0]), float(parts[1]), int(parts[2]), int(parts[3]))
+                    )
                 elif current_section == "atoms":
-                    data.atom_records.append((
-                        int(parts[0]), int(parts[1]), int(parts[2]),
-                        float(parts[3]), float(parts[4]), float(parts[5]), float(parts[6])
-                    ))
+                    data.atom_records.append(
+                        (
+                            int(parts[0]),
+                            int(parts[1]),
+                            int(parts[2]),
+                            float(parts[3]),
+                            float(parts[4]),
+                            float(parts[5]),
+                            float(parts[6]),
+                        )
+                    )
                 elif current_section == "bonds":
                     data.bond_records.append(tuple(int(x) for x in parts))
                 elif current_section == "angles":
@@ -251,23 +257,6 @@ def parseLammps(path: Path) -> LammpsData:
         i += 1
 
     return data
-
-
-def _parseDataLine(line: str) -> list[str] | None:
-    """Parse a data line into a list of values.
-
-    Handles lines with extra spaces and trailing comments.
-
-    Args:
-        line: A line from the LAMMPS data file.
-
-    Returns:
-        List of string values, or None if line is invalid.
-    """
-    if "#" in line:
-        line = line[:line.index("#")].strip()
-    parts = line.split()
-    return parts if parts else None
 
 
 def generateLammps(data: LammpsData, outPath: Path) -> None:
@@ -381,18 +370,14 @@ def generateLammps(data: LammpsData, outPath: Path) -> None:
     lines.append("Dihedrals")
     lines.append("")
     for dih_id, dih_type, a1, a2, a3, a4 in data.dihedral_records:
-        lines.append(
-            f"{dih_id:>10} {dih_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}"
-        )
+        lines.append(f"{dih_id:>10} {dih_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
     lines.append("")
 
     # Impropers
     lines.append("Impropers")
     lines.append("")
     for imp_id, imp_type, a1, a2, a3, a4 in data.improper_records:
-        lines.append(
-            f"{imp_id:>10} {imp_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}"
-        )
+        lines.append(f"{imp_id:>10} {imp_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
     lines.append("")
 
     outPath.write_text("\n".join(lines) + "\n")
@@ -479,131 +464,87 @@ def _solve_weighted_adjustment(
 def adjustTotalCharge(
     data: LammpsData,
     targetCharge: float,
-    db,
-    atoms: list,
-    atomTypeMap: dict,
-    typeInfo: dict,
-) -> None:
+    db: MacroMapDB,
+    atomTypeParams: dict,
+) -> tuple[float, float]:
     """Adjust atom charges in LammpsData to achieve target total charge.
 
     Distributes charge delta using a weighted approach:
     1. First to atoms with charge_list entries > 1 (proportional to |charge|)
     2. Then to sp3 carbons meeting criteria if residual remains
-    3. Warns if sp3 carbon adjustment exceeds 0.01 per atom
 
     Args:
         data: LammpsData object to modify in-place.
         targetCharge: Desired total charge for the system. If None, no adjustment.
         db: MacroMapDB with atomTypes information.
-        atoms: List of atom dicts from molReader.getAtoms().
-        atomTypeMap: Dict mapping atomIdx -> lammpsType (from db).
-        typeInfo: Dict mapping outputType -> {charge, element, lammps_type, ...}.
+        atomTypeParams: Dict mapping db_lammps_type -> {type, element, mass, ...}.
 
     Returns:
-        Tuple of (charge_after_step1, charge_after_step2). If targetCharge is None,
-        returns (current_charge, current_charge).
+        Tuple of (charge_after_step1, charge_after_step2).
     """
-    import logging
-
-    log = logging.getLogger("adjustTotalCharge")
-
-    # Calculate current total charge
     current_charge = sum(atom[3] for atom in data.atom_records)
 
-    # No adjustment if targetCharge is None
     if targetCharge is None:
         return current_charge, current_charge
 
     delta = targetCharge - current_charge
-
     if abs(delta) < 1e-9:
         return current_charge, current_charge
 
-    # Get all non-hydrogen data indices
-    non_h_data_indices = [
-        i for i, atom in enumerate(data.atom_records) if atom[2] != 1
-    ]
+    # Build output_type -> db_lammps_type mapping
+    output_to_db_type = {params["type"]: db_type for db_type, params in atomTypeParams.items()}
 
-    if not non_h_data_indices:
-        return current_charge, current_charge
-
-    # ── Step 1: Atoms with charge_list > 1 ──────────────────────────────────
-    # Build lookup: (element, lammps_type) -> charge_list
+    # Build (element, db_lammps_type) -> charge_list lookup
     element_lammps_to_chargelist = {}
-    for hop3_key, entry in db.atomTypes.items():
-        element = entry["element"]
-        lammps_type = entry["lammps_type"]
+    for entry in db.atomTypes.values():
         charge_list = entry.get("charge_list", [])
         if len(charge_list) > 1:
-            element_lammps_to_chargelist[(element, lammps_type)] = charge_list
+            key = (entry["element"], entry["lammps_type"])
+            element_lammps_to_chargelist[key] = charge_list
 
-    # Build outputType -> lammps_type mapping from typeInfo
-    output_to_lammps = {
-        ot: info["lammps_type"]
-        for ot, info in typeInfo.items()
-    }
-
-    multi_entry_data = []  # list of (data_idx, current_q, min_q, max_q, weight)
-
-    for data_idx in non_h_data_indices:
-        atom_rec = data.atom_records[data_idx]
+    # Collect multi-entry atoms for step 1
+    multi_entry = []
+    for data_idx, atom_rec in enumerate(data.atom_records):
         output_type = atom_rec[2]
-        current_q = atom_rec[3]
-
-        if output_type not in typeInfo:
+        if output_type not in output_to_db_type:
             continue
-
-        lammps_type = output_to_lammps.get(output_type)
-        element = typeInfo[output_type]["element"]
-        key = (element, lammps_type)
-
+        db_type = output_to_db_type[output_type]
+        element = atomTypeParams[db_type]["element"]
+        key = (element, db_type)
         if key not in element_lammps_to_chargelist:
             continue
-
         charge_list = element_lammps_to_chargelist[key]
-        min_q = min(charge_list)
-        max_q = max(charge_list)
-        weight = abs(current_q) if abs(current_q) > 1e-9 else 0.0
-        if weight < 1e-9:
+        current_q = atom_rec[3]
+        if abs(current_q) < 1e-9:
             continue
+        multi_entry.append((data_idx, current_q, min(charge_list), max(charge_list), abs(current_q)))
 
-        multi_entry_data.append((data_idx, current_q, min_q, max_q, weight))
+    charge_after_step1 = current_charge
+    if multi_entry:
+        indices = [d[0] for d in multi_entry]
+        charges = [d[1] for d in multi_entry]
+        min_bounds = [d[2] for d in multi_entry]
+        max_bounds = [d[3] for d in multi_entry]
+        weights = [d[4] for d in multi_entry]
 
-    if multi_entry_data:
-        indices = [d[0] for d in multi_entry_data]
-        charges = [d[1] for d in multi_entry_data]
-        min_bounds = [d[2] for d in multi_entry_data]
-        max_bounds = [d[3] for d in multi_entry_data]
-        weights = [d[4] for d in multi_entry_data]
-
-        adjustments = _solve_weighted_adjustment(
-            delta, indices, charges, min_bounds, max_bounds, weights
-        )
+        adjustments = _solve_weighted_adjustment(delta, indices, charges, min_bounds, max_bounds, weights)
 
         for i, data_idx in enumerate(indices):
-            new_q = charges[i] + adjustments[i]
             atom = list(data.atom_records[data_idx])
-            atom[3] = new_q
+            atom[3] = charges[i] + adjustments[i]
             data.atom_records[data_idx] = tuple(atom)
 
-        # Recalculate delta after step 1
         charge_after_step1 = sum(atom[3] for atom in data.atom_records)
         delta = targetCharge - charge_after_step1
-    else:
-        charge_after_step1 = sum(atom[3] for atom in data.atom_records)
 
-    # Initialize step2 charge as step1 charge
+    # Step 2: evenly distribute residual across all atoms
     charge_after_step2 = charge_after_step1
-
-    # ── Step 2: evenly distribute residual across all atoms ───────────────────
     if abs(delta) > 1e-9:
         adj_per_atom = delta / len(data.atom_records)
         for i in range(len(data.atom_records)):
             atom = list(data.atom_records[i])
             atom[3] += adj_per_atom
             data.atom_records[i] = tuple(atom)
-        log.info(f"  Step 2 charge adjustment: {adj_per_atom:+.6f} per atom ({len(data.atom_records)} atoms)")
-
-    charge_after_step2 = sum(atom[3] for atom in data.atom_records)
+        charge_after_step2 = sum(atom[3] for atom in data.atom_records)
 
     return charge_after_step1, charge_after_step2
