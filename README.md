@@ -8,7 +8,7 @@ Molecular force field parameterization pipeline for generating LAMMPS data files
 - **Hierarchical fallback**: Uses progressively more general environment matching when exact matches aren't available
 - **Bonded parameter support**: Handles bonds, angles, dihedrals, and impropers with symmetric canonical keys
 - **SQLite database**: Efficient storage and lookup of force field parameters
-- **Two-step charge adjustment**: Automatically adjusts total system charge using a weighted two-step approach: first redistributes to atoms with multiple charge options, then to sp3 carbons if needed
+- **Two-step charge adjustment**: Automatically adjusts total system charge using a weighted two-step approach: first redistributes to atoms with multiple charge options, then evenly across all atoms if residual remains
 - **LAMMPS output**: Generates complete LAMMPS data files ready for simulation
 - **Flexible sample input**: Supports both `.mol`/`.pdb` + `.lmp` pairs, as well as standalone `.lmp` files (atom types inferred from mass via built-in element mass table)
 
@@ -16,7 +16,7 @@ Molecular force field parameterization pipeline for generating LAMMPS data files
 
 ### Requirements
 
-- Python 3.7+
+- Python 3.10+
 - RDKit (`rdkit>=2022.9.1`, via conda-forge)
 
 ### Installation
@@ -62,6 +62,8 @@ mappingff build-db samples/ -d samples.db
 mappingff parameterize target.mol -d samples.db
 ```
 
+If `-d` is not specified, mappingff automatically searches for a `.db` file in the same directory as the target molecule.
+
 Or with charge adjustment:
 
 ```bash
@@ -104,7 +106,7 @@ mappingff build-db <samples_dir> [options]
 
 Options:
   -d, --db PATH        Output database file path (default: samples.db)
-  -v, --verbose        Print detailed progress
+  -a, --append         Append to existing database instead of replacing
 ```
 
 ### `parameterize`
@@ -115,10 +117,10 @@ Parameterize a target molecule and generate LAMMPS file.
 mappingff parameterize <mol_file> [options]
 
 Options:
-  -d, --db PATH        Path to database file (default: samples.db)
+  -d, --db PATH        Path to database file (auto-searched if omitted)
   -o, --out PATH       Output LAMMPS file (default: <mol_file>.lmp)
   -c, --charge FLOAT  Target total charge for the system (default: no adjustment)
-  -v, --verbose        Print detailed progress
+  -v, --verbose       Print detailed progress
 ```
 
 ## How It Works
@@ -159,8 +161,8 @@ For impropers, mappingff follows OPLS force field conventions: only C or N cente
 
 Bonded parameters (bonds, angles, dihedrals) use canonical keys that account for molecular symmetry:
 
-- **Bonds**: (keyA, keyB) with keyA ≤ keyB
-- **Angles**: (keyA, keyB, keyC) with keyA ≤ keyC (center B is fixed)
+- **Bonds**: (keyA, keyB) ordered lexicographically
+- **Angles**: (keyA, keyB, keyC) with keyA ≤ keyC (center B is fixed, outer atoms swappable)
 - **Dihedrals**: (keyA, keyB, keyC, keyD) where (A,B,C,D) and (D,C,B,A) are equivalent
 
 ### Charge Adjustment
@@ -169,7 +171,7 @@ When `--charge` is specified, the system charge is adjusted using a two-step wei
 
 **Step 1 - Multi-entry types**: Atoms whose atom type has multiple charge options (`charge_list` length > 1) receive charge adjustments weighted by their current absolute charge, bounded by the available range for that type.
 
-**Step 2 - all atoms**: Any remaining charge delta is distributed evenly across all atoms in the system.
+**Step 2 - All atoms**: Any remaining charge delta is distributed evenly across all atoms in the system.
 
 When `--charge` is not specified, no charge adjustment is performed.
 
@@ -178,25 +180,28 @@ When `--charge` is not specified, no charge adjustment is performed.
 mappingff can be imported and used as a Python library:
 
 ```python
-from mappingff import buildDb, parameterize
+from mappingff import build_db, parameterize
+from pathlib import Path
 
 # Build database
-result = buildDb(
-    samplesDir=Path("samples"),
-    dbPath=Path("database/db.db"),
-    verbose=True
+build_db(
+    samples_dir=Path("samples"),
+    db_path=Path("database/samples.db"),
+    append=False,
 )
-print(f"Built database with {result['atoms_processed']} atoms")
+print("Database built successfully")
 
 # Parameterize molecule
 result = parameterize(
-    molPath=Path("target.mol"),
-    dbPath=Path("database/db.db"),
-    outPath=Path("target.lmp"),
-    total_charge=0.0,
-    verbose=True
+    topo_path=Path("target.mol"),
+    db_path=Path("database/samples.db"),
+    out_path=Path("target.lmp"),
+    total_charge=None,
 )
 print(f"Assigned {result['unique_types']} atom types")
+print(f"  hop3={result['hop3_matches']}, hop2={result['hop2_matches']}, "
+      f"hop1={result['hop1_matches']}, hop0={result['hop0_matches']}, "
+      f"no_match={result['no_match']}")
 ```
 
 ## Database Schema
@@ -205,7 +210,7 @@ The SQLite database contains:
 
 | Table | Description |
 |-------|-------------|
-| `atom_types` | Atom type definitions with hop3/hop2/hop1/hop0 keys |
+| `atom_types` | Atom type definitions with hop3/hop2/hop1/hop0 keys, mass, sigma, epsilon, charge |
 | `hop2_keymap` | hop2-level fallback mappings |
 | `hop1_keymap` | hop1-level fallback mappings |
 | `hop0_keymap` | hop0-level fallback mappings |
