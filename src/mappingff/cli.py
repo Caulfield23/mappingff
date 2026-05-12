@@ -37,6 +37,12 @@ def main() -> None:
         default=Path("samples.db"),
         help="Output database file path (default: samples.db)",
     )
+    build_parser.add_argument(
+        "-a",
+        "--append",
+        action="store_true",
+        help="Append to existing database instead of replacing (default: replace)",
+    )
 
     # parameterize command
     param_parser = sub.add_parser("parameterize", help="Parameterize target molecule")
@@ -84,8 +90,8 @@ def main() -> None:
             ],
         )
         db_path = args.db
-        build_db(args.samples_dir, db_path)
-        print(f"Database build complete!")
+        build_db(args.samples_dir, db_path, append=args.append)
+        print("Database build complete!")
 
     elif args.command == "parameterize":
         if args.out is None:
@@ -95,6 +101,9 @@ def main() -> None:
             db_files = list(args.mol_file.parent.glob("*.db"))
             if db_files:
                 args.db = db_files[0]
+
+        if args.db is None or not args.db.exists():
+            raise FileNotFoundError(f"Database not found: {args.db}")
 
         logging.basicConfig(
             level=logging.DEBUG if args.verbose else logging.INFO,

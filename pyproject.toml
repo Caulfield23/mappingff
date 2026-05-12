@@ -7,7 +7,7 @@ name = "mappingff"
 version = "1.3.0"
 description = "Molecular force field parameterization pipeline for generating LAMMPS data files"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "mappingff contributors" }
@@ -23,7 +23,6 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering :: Chemistry",
   "Topic :: Scientific/Engineering :: Physics",
 ]

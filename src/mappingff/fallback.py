@@ -1,6 +1,6 @@
 """Atom type resolution with four-level fallback.
 
-This module provides the resolveAtomType function which tries to find
+This module provides the resolve_atom_type function which tries to find
 a LAMMPS atom type for a target atom by progressively falling back through
 four levels of environment matching (all within atom_types table):
 
@@ -18,10 +18,10 @@ from mappingff.db import MacroMapDB
 
 
 def resolve_atom_type(
-    hop3Key: str,
-    hop2Key: str,
-    hop1Key: str,
-    hop0Key: str,
+    hop3_key: str,
+    hop2_key: str,
+    hop1_key: str,
+    hop0_key: str,
     db: MacroMapDB,
 ) -> tuple[int | None, str | None, str | None, str | None]:
     """Resolve atom type with four-level fallback.
@@ -33,16 +33,16 @@ def resolve_atom_type(
         4. hop0_key = ? (index, O(log n))
 
     Args:
-        hop3Key: SHA-256 key of hop3 environment.
-        hop2Key: SHA-256 key of hop2 environment.
-        hop1Key: SHA-256 key of hop1 environment.
-        hop0Key: SHA-256 key of hop0 environment.
+        hop3_key: SHA-256 key of hop3 environment.
+        hop2_key: SHA-256 key of hop2 environment.
+        hop1_key: SHA-256 key of hop1 environment.
+        hop0_key: SHA-256 key of hop0 environment.
         db: MacroMapDB instance with loaded database.
 
     Returns:
-        Tuple of (lammpsType, hop0Key, hopLevel, matchedHop3Key) if found.
-        hopLevel is "hop3", "hop2", "hop1", or "hop0".
-        matchedHop3Key is the hop3_key from the matched database row.
+        Tuple of (lammps_type, hop0_key, hop_level, matched_hop3_key) if found.
+        hop_level is "hop3", "hop2", "hop1", or "hop0".
+        matched_hop3_key is the hop3_key from the matched database row.
         Returns (None, None, None, None) if no match.
     """
     if db._conn is None:
@@ -53,7 +53,7 @@ def resolve_atom_type(
     for col, level_name, key in zip(
         ["hop3_key", "hop2_key", "hop1_key", "hop0_key"],
         ["hop3", "hop2", "hop1", "hop0"],
-        [hop3Key, hop2Key, hop1Key, hop0Key],
+        [hop3_key, hop2_key, hop1_key, hop0_key],
     ):
         cursor.execute(
             f"SELECT lammps_type, hop0_key, hop3_key FROM atom_types WHERE {col} = ? LIMIT 1",

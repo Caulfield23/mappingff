@@ -246,13 +246,41 @@ def parse_lammps(path: Path) -> LammpsData:
                         )
                     )
                 elif current_section == "bonds":
-                    data.bond_records.append(tuple(int(x) for x in parts))
+                    data.bond_records.append(
+                        (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+                    )
                 elif current_section == "angles":
-                    data.angle_records.append(tuple(int(x) for x in parts))
+                    data.angle_records.append(
+                        (
+                            int(parts[0]),
+                            int(parts[1]),
+                            int(parts[2]),
+                            int(parts[3]),
+                            int(parts[4]),
+                        )
+                    )
                 elif current_section == "dihedrals":
-                    data.dihedral_records.append(tuple(int(x) for x in parts))
+                    data.dihedral_records.append(
+                        (
+                            int(parts[0]),
+                            int(parts[1]),
+                            int(parts[2]),
+                            int(parts[3]),
+                            int(parts[4]),
+                            int(parts[5]),
+                        )
+                    )
                 elif current_section == "impropers":
-                    data.improper_records.append(tuple(int(x) for x in parts))
+                    data.improper_records.append(
+                        (
+                            int(parts[0]),
+                            int(parts[1]),
+                            int(parts[2]),
+                            int(parts[3]),
+                            int(parts[4]),
+                            int(parts[5]),
+                        )
+                    )
 
         i += 1
 
@@ -320,22 +348,23 @@ def generate_lammps(data: LammpsData, out_path: Path) -> None:
         lines.append(f"{type_id:>10} {k:>14.3f} {theta0:>14.3f}")
     lines.append("")
 
-    # Dihedral Coeffs (V1-V4: 3 decimal places)
+    # Dihedral Coeffs (type_id: integer, V1-V4: 3 decimal places)
     lines.append("Dihedral Coeffs")
     lines.append("")
     for rec in data.dihedral_coeffs:
-        line = "".join(f"{x:>14.3f}" for x in rec)
+        type_id, k0, k1, k2, k3 = rec
+        line = f"{type_id:>10}" + "".join(f"{x:>14.3f}" for x in (k0, k1, k2, k3))
         lines.append(line)
     lines.append("")
 
     # Improper Coeffs (V2/2: 3 decimal places, last two fields are integers)
     lines.append("Improper Coeffs")
     lines.append("")
-    for rec in data.improper_coeffs:
+    for rec in data.improper_coeffs:  # type: ignore[assignment]
         # rec[0] is type_id, rec[1:] are coeffs
         # last two fields are integers
         formatted = [f"{rec[0]:>10}"]
-        for x in rec[1:-2]:
+        for x in rec[1:-2]:  # type: ignore[misc]
             formatted.append(f"{x:>14.3f}")
         formatted.append(f"{int(rec[-2]):>14}")
         formatted.append(f"{int(rec[-1]):>14}")
@@ -463,7 +492,7 @@ def _solve_weighted_adjustment(
 
 def adjust_total_charge(
     data: LammpsData,
-    target_charge: float,
+    target_charge: float | None,
     db: MacroMapDB,
     atom_type_params: dict,
 ) -> tuple[float, float]:
@@ -492,11 +521,13 @@ def adjust_total_charge(
         return current_charge, current_charge
 
     # Build output_type -> db_lammps_type mapping
-    output_to_db_type = {params["type"]: db_type for db_type, params in atom_type_params.items()}
+    output_to_db_type = {
+        params["type"]: db_type for db_type, params in atom_type_params.items()
+    }
 
     # Build (element, db_lammps_type) -> charge_list lookup
     element_lammps_to_chargelist = {}
-    for entry in db.atomTypes.values():
+    for entry in db.atom_types.values():
         charge_list = entry.get("charge_list", [])
         if len(charge_list) > 1:
             key = (entry["element"], entry["lammps_type"])
@@ -509,6 +540,8 @@ def adjust_total_charge(
         if output_type not in output_to_db_type:
             continue
         db_type = output_to_db_type[output_type]
+        if db_type is None:
+            continue
         element = atom_type_params[db_type]["element"]
         key = (element, db_type)
         if key not in element_lammps_to_chargelist:
@@ -517,7 +550,9 @@ def adjust_total_charge(
         current_q = atom_rec[3]
         if abs(current_q) < 1e-9:
             continue
-        multi_entry.append((data_idx, current_q, min(charge_list), max(charge_list), abs(current_q)))
+        multi_entry.append(
+            (data_idx, current_q, min(charge_list), max(charge_list), abs(current_q))
+        )
 
     charge_after_step1 = current_charge
     if multi_entry:
@@ -527,12 +562,14 @@ def adjust_total_charge(
         max_bounds = [d[3] for d in multi_entry]
         weights = [d[4] for d in multi_entry]
 
-        adjustments = _solve_weighted_adjustment(delta, indices, charges, min_bounds, max_bounds, weights)
+        adjustments = _solve_weighted_adjustment(
+            delta, indices, charges, min_bounds, max_bounds, weights
+        )
 
         for i, data_idx in enumerate(indices):
             atom = list(data.atom_records[data_idx])
             atom[3] = charges[i] + adjustments[i]
-            data.atom_records[data_idx] = tuple(atom)
+            data.atom_records[data_idx] = tuple(atom)  # type: ignore[assignment]
 
         charge_after_step1 = sum(atom[3] for atom in data.atom_records)
         delta = target_charge - charge_after_step1
@@ -544,7 +581,7 @@ def adjust_total_charge(
         for i in range(len(data.atom_records)):
             atom = list(data.atom_records[i])
             atom[3] += adj_per_atom
-            data.atom_records[i] = tuple(atom)
+            data.atom_records[i] = tuple(atom)  # type: ignore[assignment]
         charge_after_step2 = sum(atom[3] for atom in data.atom_records)
 
     return charge_after_step1, charge_after_step2

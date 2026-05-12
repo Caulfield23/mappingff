@@ -57,13 +57,11 @@ class MolReader:
         Sanitization is performed after parsing to ensure implicit valence
         and other computed properties are available.
         """
-        text = self._path.read_text(encoding="utf-8")
-
         # Determine file type by extension and parse accordingly
         suffix = self._path.suffix.lower()
         if suffix == ".mol":
+            text = self._path.read_text(encoding="utf-8")
             # Remove OBJ3D blocks which newer RDKit versions reject
-            lines = text.splitlines()
             lines = text.splitlines()
             skip = False
             filtered_lines = []
@@ -77,18 +75,24 @@ class MolReader:
                 if not skip:
                     filtered_lines.append(line)
             text = "\n".join(filtered_lines)
-            self._mol = Chem.MolFromMolBlock(text, sanitize=True, removeHs=False)
+            mol = Chem.MolFromMolBlock(text, sanitize=True, removeHs=False)
+            if mol is None:
+                raise ValueError(f"Failed to parse MOL file: {self._path}")
+            self._mol = mol
 
         elif suffix == ".pdb":
-            self._mol = Chem.MolFromPDBFile(
-                str(self._path), sanitize=False, removeHs=False
-            )
-            rdDetermineBonds.DetermineBondOrders(self._mol, charge=0)
-            SanitizeMol(self._mol)
+            mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
+            if mol is None:
+                raise ValueError(f"Failed to parse PDB file: {self._path}")
+            rdDetermineBonds.DetermineBondOrders(mol, charge=0)
+            SanitizeMol(mol)
+            self._mol = mol
 
         elif suffix == ".lmp":
-            lmpData = parse_lammps(self._path)
-            self._mol = lmp_to_rdkit_mol(lmpData)
+            lmp_data = parse_lammps(self._path)
+            self._mol = lmp_to_rdkit_mol(lmp_data)
+        else:
+            raise ValueError(f"Unsupported file type: {self._path}")
 
     @property
     def mol(self) -> rdchem.Mol:
@@ -324,15 +328,15 @@ class MolReader:
 # ── Convenience Re-exports from encode.py ──────────────────────────────────────
 
 
-def compute_hop_keys(molReader: MolReader, atomIdx: int) -> tuple[str, str, str, str]:
+def compute_hop_keys(mol_reader: MolReader, atom_idx: int) -> tuple[str, str, str, str]:
     """Compute hop3, hop2, hop1, and hop0 keys for an atom using graph-based encoding.
 
     Args:
-        molReader: MolReader instance with loaded molecule.
-        atomIdx: 1-based atom index.
+        mol_reader: MolReader instance with loaded molecule.
+        atom_idx: 1-based atom index.
 
     Returns:
-        Tuple of (hop3Key, hop2Key, hop1Key, hop0Key), all 64-char hex strings.
+        Tuple of (hop3_key, hop2_key, hop1_key, hop0_key), all 64-char hex strings.
     """
-    rd_atom = molReader._mol.GetAtomWithIdx(atomIdx - 1)
-    return encode._computeGraphHopKeys(molReader._mol, rd_atom)
+    rd_atom = mol_reader._mol.GetAtomWithIdx(atom_idx - 1)
+    return encode.compute_graph_hop_keys(mol_reader._mol, rd_atom)

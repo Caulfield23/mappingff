@@ -28,6 +28,7 @@ _BOND_TYPE_CODE = {
     Chem.rdchem.BondType.AROMATIC: "A",
 }
 
+
 def _bond_type_code(bond: rdchem.Bond) -> str:
     return _BOND_TYPE_CODE.get(bond.GetBondType(), "U")
 
@@ -35,7 +36,7 @@ def _bond_type_code(bond: rdchem.Bond) -> str:
 # ── Graph-Based Subgraph Extraction ────────────────────────────────────────────
 
 
-def _atomProps(atom: rdchem.Atom) -> dict:
+def _atom_props(atom: rdchem.Atom) -> dict:
     """Get canonical properties dict for an atom."""
     return {
         "z": atom.GetAtomicNum(),
@@ -47,13 +48,13 @@ def _atomProps(atom: rdchem.Atom) -> dict:
     }
 
 
-def _propsWithRing(atom: rdchem.Atom, mol: rdchem.Mol) -> dict:
-    props = _atomProps(atom)
+def _props_with_ring(atom: rdchem.Atom, mol: rdchem.Mol) -> dict:
+    props = _atom_props(atom)
     props["ring_count"] = mol.GetRingInfo().NumAtomRings(atom.GetIdx())
     return props
 
 
-def _collectBonds(atom_idx_set: set, mol: rdchem.Mol, exclude_self: bool) -> list:
+def _collect_bonds(atom_idx_set: set, mol: rdchem.Mol, exclude_self: bool) -> list:
     """Collect bonds among atoms in atom_idx_set via mol.GetAtomWithIdx."""
     bonds = []
     for idx in atom_idx_set:
@@ -102,8 +103,7 @@ def get_hop0_subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
     neighbor_sig = []
     bond_kinds = []
     for neighbor in atom.GetNeighbors():
-        n_idx = neighbor.GetIdx()
-        bond = mol.GetBondBetweenAtoms(center_idx, n_idx)
+        bond = mol.GetBondBetweenAtoms(center_idx, neighbor.GetIdx())
         bt_code = _bond_type_code(bond)
         sig = f"{neighbor.GetAtomicNum()}:{bt_code}:{neighbor.GetFormalCharge()}"
         neighbor_sig.append(sig)
@@ -115,14 +115,16 @@ def get_hop0_subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
     center_props["neighbor_sig"] = neighbor_sig
     center_props["bond_kinds"] = bond_kinds
 
-    return {"center": center_props, "hop1": {}, "hop2": {}, "bonds": []}
+    return _canonicalize_subgraph(
+        {"center": center_props, "hop1": {}, "hop2": {}, "hop3": {}, "bonds": []},
+        center_idx,
+    )
 
 
-def _buildHopLevel(
+def _build_hop_level(
     mol: rdchem.Mol,
     parent_idx_set: set,
     exclude: set,
-    parent_key: str,
 ) -> tuple[set, dict]:
     """Build one hop level from parent atom indices.
 
@@ -130,7 +132,6 @@ def _buildHopLevel(
         mol: RDKit molecule.
         parent_idx_set: Set of parent atom indices.
         exclude: Indices to skip (center + previous levels).
-        parent_key: "bt_to_center" for hop1, "bt_to_parent" for hop2/hop3.
 
     Returns:
         (idx_set, atom_dict) for this hop level.
@@ -144,7 +145,7 @@ def _buildHopLevel(
             if idx in exclude or idx in idx_set:
                 continue
             idx_set.add(idx)
-            props = _propsWithRing(n, mol)
+            props = _props_with_ring(n, mol)
             bond = mol.GetBondBetweenAtoms(p_idx, idx)
             props["bt_to_parent"] = _bond_type_code(bond)
             props["parent_idx"] = p_idx
@@ -152,86 +153,139 @@ def _buildHopLevel(
     return idx_set, atom_dict
 
 
-def _getHop1Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+def _center_props_with_ring(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
     center_idx = atom.GetIdx()
-    center_props = _atomProps(atom)
+    center_props = _atom_props(atom)
     center_props["ring_count"] = mol.GetRingInfo().NumAtomRings(center_idx)
+    return center_props
 
+
+def _build_hop1_shell(
+    mol: rdchem.Mol, atom: rdchem.Atom
+) -> tuple[set[int], dict[int, dict]]:
+    center_idx = atom.GetIdx()
     hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
     hop1 = {}
-    for n in atom.GetNeighbors():
-        idx = n.GetIdx()
-        props = _propsWithRing(n, mol)
+    for neighbor in atom.GetNeighbors():
+        idx = neighbor.GetIdx()
+        props = _props_with_ring(neighbor, mol)
         bond = mol.GetBondBetweenAtoms(center_idx, idx)
         props["bt_to_center"] = _bond_type_code(bond)
         hop1[idx] = props
-
-    bonds = [(center_idx, h1, hop1[h1]["bt_to_center"]) for h1 in hop1_idx_set]
-    bonds += _collectBonds(hop1_idx_set, mol, exclude_self=True)
-
-    return {"center": center_props, "hop1": hop1, "hop2": {}, "bonds": bonds}
+    return hop1_idx_set, hop1
 
 
-def _getHop2Subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+def _build_subgraph(mol: rdchem.Mol, atom: rdchem.Atom, max_hop: int) -> dict:
     center_idx = atom.GetIdx()
-    center_props = _atomProps(atom)
-    center_props["ring_count"] = mol.GetRingInfo().NumAtomRings(center_idx)
+    center_props = _center_props_with_ring(mol, atom)
 
-    hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
-    hop1 = {}
-    for n in atom.GetNeighbors():
-        idx = n.GetIdx()
-        props = _propsWithRing(n, mol)
-        bond = mol.GetBondBetweenAtoms(center_idx, idx)
-        props["bt_to_center"] = _bond_type_code(bond)
-        hop1[idx] = props
+    hop1_idx_set, hop1 = _build_hop1_shell(mol, atom)
+    hop2_idx_set: set[int] = set()
+    hop2: dict[int, dict] = {}
+    hop3_idx_set: set[int] = set()
+    hop3: dict[int, dict] = {}
 
-    hop2_idx_set, hop2 = _buildHopLevel(mol, hop1_idx_set, hop1_idx_set | {center_idx}, "bt_to_parent")
+    if max_hop >= 2:
+        hop2_idx_set, hop2 = _build_hop_level(
+            mol, hop1_idx_set, hop1_idx_set | {center_idx}
+        )
+    if max_hop >= 3:
+        hop3_idx_set, hop3 = _build_hop_level(
+            mol, hop2_idx_set, hop1_idx_set | hop2_idx_set | {center_idx}
+        )
 
     bonds = [(center_idx, h1, hop1[h1]["bt_to_center"]) for h1 in hop1_idx_set]
-    bonds += _collectBonds(hop1_idx_set, mol, exclude_self=True)
-    bonds += _collectBonds(hop2_idx_set, mol, exclude_self=True)
+    if max_hop >= 3:
+        bonds += _collect_cross_level_bonds(mol, hop2_idx_set, hop1_idx_set)
+        bonds += _collect_cross_level_bonds(mol, hop3_idx_set, hop2_idx_set)
+    bonds += _collect_bonds(hop1_idx_set, mol, exclude_self=True)
+    if max_hop >= 2:
+        bonds += _collect_bonds(hop2_idx_set, mol, exclude_self=True)
+    if max_hop >= 3:
+        bonds += _collect_bonds(hop3_idx_set, mol, exclude_self=True)
 
-    return {"center": center_props, "hop1": hop1, "hop2": hop2, "bonds": bonds}
+    return {
+        "center": center_props,
+        "hop1": hop1,
+        "hop2": hop2 if max_hop >= 2 else {},
+        "hop3": hop3 if max_hop >= 3 else {},
+        "bonds": bonds,
+    }
+
+
+def _get_hop1_subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    center_idx = atom.GetIdx()
+    subgraph = _build_subgraph(mol, atom, max_hop=1)
+    return _canonicalize_subgraph(subgraph, center_idx)
+
+
+def _get_hop2_subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
+    center_idx = atom.GetIdx()
+    subgraph = _build_subgraph(mol, atom, max_hop=2)
+    return _canonicalize_subgraph(subgraph, center_idx)
 
 
 def get_hop3_subgraph(mol: rdchem.Mol, atom: rdchem.Atom) -> dict:
     center_idx = atom.GetIdx()
-    center_props = _atomProps(atom)
-    center_props["ring_count"] = mol.GetRingInfo().NumAtomRings(center_idx)
-
-    hop1_idx_set = {n.GetIdx() for n in atom.GetNeighbors()}
-    hop1 = {}
-    for n in atom.GetNeighbors():
-        idx = n.GetIdx()
-        props = _propsWithRing(n, mol)
-        bond = mol.GetBondBetweenAtoms(center_idx, idx)
-        props["bt_to_center"] = _bond_type_code(bond)
-        hop1[idx] = props
-
-    hop2_idx_set, hop2 = _buildHopLevel(mol, hop1_idx_set, hop1_idx_set | {center_idx}, "bt_to_parent")
-    hop3_idx_set, hop3 = _buildHopLevel(mol, hop2_idx_set, hop1_idx_set | hop2_idx_set | {center_idx}, "bt_to_parent")
-
-    bonds = [(center_idx, h1, hop1[h1]["bt_to_center"]) for h1 in hop1_idx_set]
-    for h2 in hop2_idx_set:
-        for n in mol.GetAtomWithIdx(h2).GetNeighbors():
-            if n.GetIdx() in hop1_idx_set:
-                bonds.append((h2, n.GetIdx(), _bond_type_code(mol.GetBondBetweenAtoms(h2, n.GetIdx()))))
-    for h3 in hop3_idx_set:
-        for n in mol.GetAtomWithIdx(h3).GetNeighbors():
-            if n.GetIdx() in hop2_idx_set:
-                bonds.append((h3, n.GetIdx(), _bond_type_code(mol.GetBondBetweenAtoms(h3, n.GetIdx()))))
-    bonds += _collectBonds(hop1_idx_set, mol, exclude_self=True)
-    bonds += _collectBonds(hop2_idx_set, mol, exclude_self=True)
-    bonds += _collectBonds(hop3_idx_set, mol, exclude_self=True)
-
-    return {"center": center_props, "hop1": hop1, "hop2": hop2, "hop3": hop3, "bonds": bonds}
+    subgraph = _build_subgraph(mol, atom, max_hop=3)
+    return _canonicalize_subgraph(subgraph, center_idx, include_hop3=True)
 
 
 # ── Graph Hashing ────────────────────────────────────────────────────────────────
 
 
-def _canonicalizeSubgraph(subgraph: dict, center_idx: int, include_hop3: bool = False) -> dict:
+def _collect_cross_level_bonds(
+    mol: rdchem.Mol, src_idx_set: set[int], dst_idx_set: set[int]
+) -> list[tuple[int, int, str]]:
+    bonds = []
+    for src_idx in src_idx_set:
+        for neighbor in mol.GetAtomWithIdx(src_idx).GetNeighbors():
+            dst_idx = neighbor.GetIdx()
+            if dst_idx in dst_idx_set:
+                bond = mol.GetBondBetweenAtoms(src_idx, dst_idx)
+                bonds.append((src_idx, dst_idx, _bond_type_code(bond)))
+    return bonds
+
+
+def _hop_sort_key(props: dict, bond_key: str) -> tuple[int, ...]:
+    key: tuple[int, ...] = (
+        props["z"],
+        props["fc"],
+        props["ar"],
+        props["deg"],
+        props["h"],
+        props["ring"],
+        props[bond_key],
+    )
+    if "parent_idx" in props:
+        key = key + (props["parent_idx"],)
+    return key
+
+
+def _canonicalize_hop(
+    items: list[tuple[int, dict]],
+    start_idx: int,
+    bond_key: str,
+    parent_remap: dict[int, int] | None = None,
+) -> tuple[dict[int, int], dict[int, dict]]:
+    items.sort(key=lambda item: _hop_sort_key(item[1], bond_key))
+    remap = {}
+    canon_hop = {}
+    for canon_idx, (orig_idx, props) in enumerate(items, start=start_idx):
+        remap[orig_idx] = canon_idx
+        canon_props = {
+            k: v for k, v in props.items() if k not in (bond_key, "parent_idx")
+        }
+        canon_props[bond_key] = props[bond_key]
+        if parent_remap is not None:
+            canon_props["parent_idx"] = parent_remap[props["parent_idx"]]
+        canon_hop[canon_idx] = canon_props
+    return remap, canon_hop
+
+
+def _canonicalize_subgraph(
+    subgraph: dict, center_idx: int, include_hop3: bool = False
+) -> dict:
     """Canonicalize a subgraph for hashing.
 
     Assigns canonical 0-based indices to atoms based on sorted properties.
@@ -244,85 +298,37 @@ def _canonicalizeSubgraph(subgraph: dict, center_idx: int, include_hop3: bool = 
     Returns:
         Canonicalized subgraph with remapped indices.
     """
-    canonical_atoms = []
-
-    # Center is always index 0
-    canonical_atoms.append((0, center_idx, subgraph["center"]))
-
     # Collect hop1 atoms with their original indices
     hop1_items = list(subgraph["hop1"].items())
-
-    # Sort hop1 atoms by their properties for canonical ordering
-    def hop1_sort_key(item):
-        orig_idx, props = item
-        return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_center"])
-
-    hop1_items.sort(key=hop1_sort_key)
-
-    hop1_remap = {}  # original_idx -> canonical_idx
-    for canon_idx, (orig_idx, props) in enumerate(hop1_items, start=1):
-        hop1_remap[orig_idx] = canon_idx
-        canonical_atoms.append((canon_idx, orig_idx, props))
 
     # Collect hop2 atoms if present
     hop2_items = list(subgraph.get("hop2", {}).items())
 
-    def hop2_sort_key(item):
-        orig_idx, props = item
-        return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_parent"], props["parent_idx"])
-
-    hop2_items.sort(key=hop2_sort_key)
-
-    hop2_remap = {}  # original_idx -> canonical_idx
-    for canon_idx, (orig_idx, props) in enumerate(hop2_items, start=len(hop1_items) + 1):
-        hop2_remap[orig_idx] = canon_idx
-        canonical_atoms.append((canon_idx, orig_idx, props))
-
     # Collect hop3 atoms if present and include_hop3 is True
     if include_hop3:
         hop3_items = list(subgraph.get("hop3", {}).items())
-
-        def hop3_sort_key(item):
-            orig_idx, props = item
-            return (props["z"], props["fc"], props["ar"], props["deg"], props["h"], props["ring"], props["bt_to_parent"], props["parent_idx"])
-
-        hop3_items.sort(key=hop3_sort_key)
-
-        hop3_remap = {}  # original_idx -> canonical_idx
-        for canon_idx, (orig_idx, props) in enumerate(hop3_items, start=len(hop1_items) + len(hop2_items) + 1):
-            hop3_remap[orig_idx] = canon_idx
-            canonical_atoms.append((canon_idx, orig_idx, props))
     else:
         hop3_items = []
-        hop3_remap = {}
 
-    # Build canonical representation
-    canon_hop1 = {}
-    for orig_idx, props in hop1_items:
-        canon_idx = hop1_remap[orig_idx]
-        canon_hop1[canon_idx] = {k: v for k, v in props.items() if k != "bt_to_center"}
-        canon_hop1[canon_idx]["bt_to_center"] = props["bt_to_center"]
-
-    canon_hop2 = {}
-    for orig_idx, props in hop2_items:
-        canon_idx = hop2_remap[orig_idx]
-        canon_hop2[canon_idx] = {
-            k: v for k, v in props.items()
-            if k not in ("bt_to_parent", "parent_idx")
-        }
-        canon_hop2[canon_idx]["bt_to_parent"] = props["bt_to_parent"]
-        canon_hop2[canon_idx]["parent_idx"] = hop1_remap[props["parent_idx"]]
-
-    canon_hop3 = {}
+    hop1_remap, canon_hop1 = _canonicalize_hop(
+        hop1_items, start_idx=1, bond_key="bt_to_center"
+    )
+    hop2_remap, canon_hop2 = _canonicalize_hop(
+        hop2_items,
+        start_idx=len(hop1_items) + 1,
+        bond_key="bt_to_parent",
+        parent_remap=hop1_remap,
+    )
     if include_hop3:
-        for orig_idx, props in hop3_items:
-            canon_idx = hop3_remap[orig_idx]
-            canon_hop3[canon_idx] = {
-                k: v for k, v in props.items()
-                if k not in ("bt_to_parent", "parent_idx")
-            }
-            canon_hop3[canon_idx]["bt_to_parent"] = props["bt_to_parent"]
-            canon_hop3[canon_idx]["parent_idx"] = hop2_remap[props["parent_idx"]]
+        hop3_remap, canon_hop3 = _canonicalize_hop(
+            hop3_items,
+            start_idx=len(hop1_items) + len(hop2_items) + 1,
+            bond_key="bt_to_parent",
+            parent_remap=hop2_remap,
+        )
+    else:
+        hop3_remap = {}
+        canon_hop3 = {}
 
     # Remap bonds to canonical indices
     canon_bonds = []
@@ -352,7 +358,7 @@ def _canonicalizeSubgraph(subgraph: dict, center_idx: int, include_hop3: bool = 
     canon_bonds.sort()
 
     result = {
-        "center": canonical_atoms[0][2],
+        "center": subgraph["center"],
         "hop1": canon_hop1,
         "hop2": canon_hop2,
         "bonds": canon_bonds,
@@ -363,31 +369,37 @@ def _canonicalizeSubgraph(subgraph: dict, center_idx: int, include_hop3: bool = 
     return result
 
 
-def _encodeHop1Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
-    subgraph = _getHop1Subgraph(mol, atom)
-    canonical = _canonicalizeSubgraph(subgraph, atom.GetIdx())
-    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _encode_hop1_graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    subgraph = _get_hop1_subgraph(mol, atom)
+    return hashlib.sha256(
+        json.dumps(subgraph, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def _encodeHop2Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
-    subgraph = _getHop2Subgraph(mol, atom)
-    canonical = _canonicalizeSubgraph(subgraph, atom.GetIdx(), include_hop3=False)
-    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _encode_hop2_graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    subgraph = _get_hop2_subgraph(mol, atom)
+    return hashlib.sha256(
+        json.dumps(subgraph, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def _encodeHop3Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
-    subgraph = get_hop3_subgraph(mol, atom)
-    canonical = _canonicalizeSubgraph(subgraph, atom.GetIdx(), include_hop3=True)
-    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _encode_hop3_graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    canonical = get_hop3_subgraph(mol, atom)  # already canonicalized
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def _encodeHop0Graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
-    subgraph = get_hop0_subgraph(mol, atom)
-    canonical = _canonicalizeSubgraph(subgraph, atom.GetIdx())
-    return hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _encode_hop0_graph(mol: rdchem.Mol, atom: rdchem.Atom) -> str:
+    canonical = get_hop0_subgraph(mol, atom)  # already canonicalized
+    return hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def _computeGraphHopKeys(mol: rdchem.Mol, atom: rdchem.Atom) -> tuple[str, str, str, str]:
+def compute_graph_hop_keys(
+    mol: rdchem.Mol, atom: rdchem.Atom
+) -> tuple[str, str, str, str]:
     """Compute hop3/hop2/hop1/hop0 keys using graph-based encoding.
 
     Args:
@@ -395,11 +407,11 @@ def _computeGraphHopKeys(mol: rdchem.Mol, atom: rdchem.Atom) -> tuple[str, str, 
         atom: Center atom.
 
     Returns:
-        Tuple of (hop3Key, hop2Key, hop1Key, hop0Key).
+        Tuple of (hop3_key, hop2_key, hop1_key, hop0_key).
     """
-    hop3_key = _encodeHop3Graph(mol, atom)
-    hop2_key = _encodeHop2Graph(mol, atom)
-    hop1_key = _encodeHop1Graph(mol, atom)
-    hop0_key = _encodeHop0Graph(mol, atom)
+    hop3_key = _encode_hop3_graph(mol, atom)
+    hop2_key = _encode_hop2_graph(mol, atom)
+    hop1_key = _encode_hop1_graph(mol, atom)
+    hop0_key = _encode_hop0_graph(mol, atom)
 
     return hop3_key, hop2_key, hop1_key, hop0_key

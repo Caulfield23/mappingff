@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import Counter
 from pathlib import Path
-from typing import Any
 
 
 class MacroMapDB:
@@ -38,15 +36,19 @@ class MacroMapDB:
         self._path = Path(path)
         self._conn: sqlite3.Connection | None = None
 
-    def load(self) -> None:
+    def load(self, append: bool = False) -> None:
         """Load database from SQLite file.
 
-        If the file does not exist, creates a new database with all tables.
+        Args:
+            append: If False (default), delete existing database and create fresh.
+                   If True, merge with existing data.
         """
+        if not append and self._path.exists():
+            self._path.unlink()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path)
         self._conn.row_factory = sqlite3.Row
-        self._initSchema()
+        self._init_schema()
 
         # Migrate indexes for existing databases
         for idx_name, col in [
@@ -70,11 +72,11 @@ class MacroMapDB:
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
-        self._finalizeAtomTypes()
-        self._finalizeBondedParams()
+        self._finalize_atom_types()
+        self._finalize_bonded_params()
         self._conn.commit()
 
-    def _finalizeAtomTypes(self) -> None:
+    def _finalize_atom_types(self) -> None:
         """Compute averaged sigma/epsilon from lists and update the scalar columns.
 
         sigma is rounded to 7 decimal places, epsilon to 3 decimal places.
@@ -101,7 +103,7 @@ class MacroMapDB:
                 (avg_sigma, avg_epsilon, avg_charge, row["hop3_key"]),
             )
 
-    def _finalizeBondedParams(self) -> None:
+    def _finalize_bonded_params(self) -> None:
         """Compute averaged bonded parameters from lists and update scalar columns."""
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -170,10 +172,10 @@ class MacroMapDB:
                 continue
 
             # 1. Count occurrences of (last_two) pairs as a whole
-            last_two_counts = Counter()
+            last_two_counts: dict[tuple[int, int], int] = {}
             for c in coeffs_list:
                 key = (c[-2], c[-1])  # treat as combined key
-                last_two_counts[key] += 1
+                last_two_counts[key] = last_two_counts.get(key, 0) + 1
 
             # 2. Get most common pair (if tie, most_common returns first by insertion order)
             max_count = max(last_two_counts.values())
@@ -202,7 +204,7 @@ class MacroMapDB:
             self._conn.close()
             self._conn = None
 
-    def _initSchema(self) -> None:
+    def _init_schema(self) -> None:
         """Create database tables if they don't exist."""
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -210,15 +212,18 @@ class MacroMapDB:
         cursor = self._conn.cursor()
 
         # Meta table
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
 
         # Atom types table (hop3 level as finest classification)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS atom_types (
                 lammps_type INTEGER,
                 element TEXT,
@@ -237,7 +242,8 @@ class MacroMapDB:
                 hop0_graph TEXT,
                 hop3_graph TEXT
             )
-        """)
+        """
+        )
 
         # Indexes for faster hop key lookups in fallback resolution
         cursor.execute(
@@ -251,31 +257,38 @@ class MacroMapDB:
         )
 
         # hop1 keymap (for external validation only)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS hop1_keymap (
                 hop1_key TEXT PRIMARY KEY,
                 lammps_types TEXT
             )
-        """)
+        """
+        )
 
         # hop2 keymap (for external validation only)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS hop2_keymap (
                 hop2_key TEXT PRIMARY KEY,
                 lammps_types TEXT
             )
-        """)
+        """
+        )
 
         # hop0 keymap
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS hop0_keymap (
                 hop0_key TEXT PRIMARY KEY,
                 lammps_types TEXT
             )
-        """)
+        """
+        )
 
         # Bond params
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS bond_params (
                 hop0_key_a TEXT,
                 hop0_key_b TEXT,
@@ -283,10 +296,12 @@ class MacroMapDB:
                 coeffs_list TEXT,
                 PRIMARY KEY (hop0_key_a, hop0_key_b)
             )
-        """)
+        """
+        )
 
         # Angle params
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS angle_params (
                 hop0_key_a TEXT,
                 hop0_key_b TEXT,
@@ -295,10 +310,12 @@ class MacroMapDB:
                 coeffs_list TEXT,
                 PRIMARY KEY (hop0_key_a, hop0_key_b, hop0_key_c)
             )
-        """)
+        """
+        )
 
         # Dihedral params
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS dihedral_params (
                 hop0_key_a TEXT,
                 hop0_key_b TEXT,
@@ -308,10 +325,12 @@ class MacroMapDB:
                 coeffs_list TEXT,
                 PRIMARY KEY (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d)
             )
-        """)
+        """
+        )
 
         # Improper params
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS improper_params (
                 hop0_key_a TEXT,
                 hop0_key_b TEXT,
@@ -321,7 +340,8 @@ class MacroMapDB:
                 coeffs_list TEXT,
                 PRIMARY KEY (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d)
             )
-        """)
+        """
+        )
 
         self._conn.commit()
 
@@ -343,14 +363,14 @@ class MacroMapDB:
 
         cursor = self._conn.cursor()
 
-        # Check if hop3Key already exists
+        # Check if hop3_key already exists
         cursor.execute(
             "SELECT * FROM atom_types WHERE hop3_key = ?", (info["hop3_key"],)
         )
         existing = cursor.fetchone()
 
         if existing is not None:
-            # hop3Key exists - merge sigma_list, epsilon_list, charge_list, and source
+            # hop3_key exists - merge sigma_list, epsilon_list, charge_list, and source
             existing_sigma = json.loads(existing["sigma_list"])
             existing_epsilon = json.loads(existing["epsilon_list"])
             existing_charge = json.loads(existing["charge_list"])
@@ -376,7 +396,7 @@ class MacroMapDB:
                 ),
             )
         else:
-            # hop3Key is new - get next available lammps_type
+            # hop3_key is new - get next available lammps_type
             cursor.execute("SELECT MAX(lammps_type) FROM atom_types")
             row = cursor.fetchone()
             max_type = row[0] if row[0] is not None else 0
@@ -411,11 +431,11 @@ class MacroMapDB:
                 ),
             )
 
-    def get_atom_type(self, hop3Key: str) -> dict | None:
+    def get_atom_type(self, hop3_key: str) -> dict | None:
         """Retrieve an atom type entry by hop3 key.
 
         Args:
-            hop3Key: SHA-256 key computed from hop3 environment.
+            hop3_key: SHA-256 key computed from hop3 environment.
 
         Returns:
             Atom type info dict if found, None otherwise.
@@ -424,7 +444,7 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        cursor.execute("SELECT * FROM atom_types WHERE hop3_key = ?", (hop3Key,))
+        cursor.execute("SELECT * FROM atom_types WHERE hop3_key = ?", (hop3_key,))
         row = cursor.fetchone()
         if row is None:
             return None
@@ -447,38 +467,38 @@ class MacroMapDB:
             "hop0_env": json.loads(row["hop0_graph"]) if row["hop0_graph"] else {},
         }
 
-    def insert_hop_key(self, hopKeys: list[str], lammpsType: int) -> None:
+    def insert_hop_key(self, hop_keys: list[str], lammps_type: int) -> None:
         """Insert or update hop0/1/2 keymap entries.
 
         Args:
-            hopKeys: List of [hop0_key, hop1_key, hop2_key].
-            lammpsType: LAMMPS atom type ID.
+            hop_keys: List of [hop0_key, hop1_key, hop2_key].
+            lammps_type: LAMMPS atom type ID.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        for level, hopKey in enumerate(hopKeys):
+        for level, hop_key in enumerate(hop_keys):
             table = f"hop{level}_keymap"
             key_col = f"hop{level}_key"
             cursor.execute(
-                f"SELECT lammps_types FROM {table} WHERE {key_col} = ?", (hopKey,)
+                f"SELECT lammps_types FROM {table} WHERE {key_col} = ?", (hop_key,)
             )
             row = cursor.fetchone()
 
             if row is not None:
                 lammps_types = json.loads(row["lammps_types"])
-                if lammpsType not in lammps_types:
-                    lammps_types.append(lammpsType)
+                if lammps_type not in lammps_types:
+                    lammps_types.append(lammps_type)
                     lammps_types.sort()
                 cursor.execute(
                     f"UPDATE {table} SET lammps_types = ? WHERE {key_col} = ?",
-                    (json.dumps(lammps_types), hopKey),
+                    (json.dumps(lammps_types), hop_key),
                 )
             else:
                 cursor.execute(
                     f"INSERT INTO {table} ({key_col}, lammps_types) VALUES (?, ?)",
-                    (hopKey, json.dumps([lammpsType])),
+                    (hop_key, json.dumps([lammps_type])),
                 )
 
     # ── Bonded parameter operations ───────────────────────────────────────────
@@ -490,7 +510,7 @@ class MacroMapDB:
         are averaged with the existing values.
 
         Args:
-            key: Tuple of (hop0KeyA, hop0KeyB) in lexicographic order.
+            key: Tuple of (hop0_key_a, hop0_key_b) in lexicographic order.
             params: Dict with 'k' (force constant) and 'r0' (equilibrium distance).
         """
         if self._conn is None:
@@ -559,7 +579,7 @@ class MacroMapDB:
         When the same key already exists, parameters are averaged.
 
         Args:
-            key: Tuple of (hop0KeyA, hop0KeyB, hop0KeyC) where B is the center atom.
+            key: Tuple of (hop0_key_a, hop0_key_b, hop0_key_c) where B is the center atom.
                  Stored in lexicographic order of outer atoms (A and C can be swapped).
             params: Dict with 'k' (force constant) and 'theta0' (equilibrium angle).
         """
@@ -603,16 +623,16 @@ class MacroMapDB:
             )
 
     def lookup_angle_param(
-        self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str
+        self, hop0_key_a: str, hop0_key_b: str, hop0_key_c: str
     ) -> dict | None:
         """Look up angle parameter by hop0 key triple.
 
         The center atom (B) is fixed, outer atoms (A and C) can be swapped.
 
         Args:
-            hop0KeyA: hop0 key of first atom.
-            hop0KeyB: hop0 key of the center atom.
-            hop0KeyC: hop0 key of third atom.
+            hop0_key_a: hop0 key of first atom.
+            hop0_key_b: hop0 key of the center atom.
+            hop0_key_c: hop0 key of third atom.
 
         Returns:
             Angle parameter dict if found, None otherwise.
@@ -621,13 +641,13 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        if hop0KeyA <= hop0KeyC:
+        if hop0_key_a <= hop0_key_c:
             cursor.execute(
                 """
                 SELECT coeffs FROM angle_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
             """,
-                (hop0KeyA, hop0KeyB, hop0KeyC),
+                (hop0_key_a, hop0_key_b, hop0_key_c),
             )
         else:
             cursor.execute(
@@ -635,7 +655,7 @@ class MacroMapDB:
                 SELECT coeffs FROM angle_params
                 WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ?
             """,
-                (hop0KeyC, hop0KeyB, hop0KeyA),
+                (hop0_key_c, hop0_key_b, hop0_key_a),
             )
         row = cursor.fetchone()
         if row is None:
@@ -649,7 +669,7 @@ class MacroMapDB:
         When the same key already exists, coefficient arrays are averaged.
 
         Args:
-            key: Tuple of (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD) in canonical order.
+            key: Tuple of (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d) in canonical order.
                  Outer atoms (A and D) can be swapped.
             params: Dict with 'coeffs' list (e.g., [0, 0, 0.3, 0] for OPLS dihedral).
         """
@@ -695,17 +715,21 @@ class MacroMapDB:
             )
 
     def lookup_dihedral_param(
-        self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
+        self,
+        hop0_key_a: str,
+        hop0_key_b: str,
+        hop0_key_c: str,
+        hop0_key_d: str,
     ) -> dict | None:
         """Look up dihedral parameter by hop0 key quadruple.
 
         Outer atoms (A and D) can be swapped while preserving the order of B and C.
 
         Args:
-            hop0KeyA: hop0 key of first atom.
-            hop0KeyB: hop0 key of second atom.
-            hop0KeyC: hop0 key of third atom.
-            hop0KeyD: hop0 key of fourth atom.
+            hop0_key_a: hop0 key of first atom.
+            hop0_key_b: hop0 key of second atom.
+            hop0_key_c: hop0 key of third atom.
+            hop0_key_d: hop0 key of fourth atom.
 
         Returns:
             Dihedral parameter dict if found, None otherwise.
@@ -716,8 +740,8 @@ class MacroMapDB:
         cursor = self._conn.cursor()
         # Dihedral (A,B,C,D) is equivalent to (D,C,B,A)
         # Choose lexicographically smaller key to normalize
-        key_normal = (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD)
-        key_reversed = (hop0KeyD, hop0KeyC, hop0KeyB, hop0KeyA)
+        key_normal = (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d)
+        key_reversed = (hop0_key_d, hop0_key_c, hop0_key_b, hop0_key_a)
         if key_reversed < key_normal:
             cursor.execute(
                 """
@@ -746,7 +770,7 @@ class MacroMapDB:
         The remaining three atoms are sorted for canonical ordering.
 
         Args:
-            key: Tuple of (hop0KeyCenter, hop0KeyA, hop0KeyB, hop0KeyC).
+            key: Tuple of (hop0_key_center, hop0_key_a, hop0_key_b, hop0_key_c).
             params: Dict with 'coeffs' list (e.g., [0, -1, 2] for harmonic improper).
         """
         if self._conn is None:
@@ -794,7 +818,11 @@ class MacroMapDB:
             )
 
     def lookup_improper_param(
-        self, hop0KeyA: str, hop0KeyB: str, hop0KeyC: str, hop0KeyD: str
+        self,
+        hop0_key_a: str,
+        hop0_key_b: str,
+        hop0_key_c: str,
+        hop0_key_d: str,
     ) -> dict | None:
         """Look up improper parameter by hop0 key quadruple.
 
@@ -802,10 +830,10 @@ class MacroMapDB:
         The remaining three atoms are sorted for canonical ordering.
 
         Args:
-            hop0KeyA: hop0 key of center atom (fixed position).
-            hop0KeyB: hop0 key of second atom.
-            hop0KeyC: hop0 key of third atom.
-            hop0KeyD: hop0 key of fourth atom.
+            hop0_key_a: hop0 key of center atom (fixed position).
+            hop0_key_b: hop0 key of second atom.
+            hop0_key_c: hop0 key of third atom.
+            hop0_key_d: hop0 key of fourth atom.
 
         Returns:
             Improper parameter dict if found, None otherwise.
@@ -814,13 +842,13 @@ class MacroMapDB:
             raise RuntimeError("Database not loaded")
 
         cursor = self._conn.cursor()
-        others = sorted([hop0KeyB, hop0KeyC, hop0KeyD])
+        others = sorted([hop0_key_b, hop0_key_c, hop0_key_d])
         cursor.execute(
             """
             SELECT coeffs FROM improper_params
             WHERE hop0_key_a = ? AND hop0_key_b = ? AND hop0_key_c = ? AND hop0_key_d = ?
         """,
-            (hop0KeyA, others[0], others[1], others[2]),
+            (hop0_key_a, others[0], others[1], others[2]),
         )
         row = cursor.fetchone()
         if row is None:
@@ -861,7 +889,6 @@ class MacroMapDB:
         """,
             (key, value),
         )
-
 
     # ── Property accessors ─────────────────────────────────────────────────────
 
@@ -956,7 +983,7 @@ class MacroMapDB:
         """Get the bond_params table.
 
         Returns:
-            Dictionary mapping (hop0KeyA, hop0KeyB) to {k, r0}.
+            Dictionary mapping (hop0_key_a, hop0_key_b) to {k, r0}.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -975,7 +1002,7 @@ class MacroMapDB:
         """Get the angle_params table.
 
         Returns:
-            Dictionary mapping (hop0KeyA, hop0KeyB, hop0KeyC) to {k, theta0}.
+            Dictionary mapping (hop0_key_a, hop0_key_b, hop0_key_c) to {k, theta0}.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -994,7 +1021,7 @@ class MacroMapDB:
         """Get the dihedral_params table.
 
         Returns:
-            Dictionary mapping (hop0KeyA, hop0KeyB, hop0KeyC, hop0KeyD) to {coeffs}.
+            Dictionary mapping (hop0_key_a, hop0_key_b, hop0_key_c, hop0_key_d) to {coeffs}.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
@@ -1017,7 +1044,7 @@ class MacroMapDB:
         """Get the improper_params table.
 
         Returns:
-            Dictionary mapping (hop0KeyCenter, hop0KeyA, hop0KeyB, hop0KeyC) to {coeffs}.
+            Dictionary mapping (hop0_key_center, hop0_key_a, hop0_key_b, hop0_key_c) to {coeffs}.
         """
         if self._conn is None:
             raise RuntimeError("Database not loaded")
