@@ -19,10 +19,10 @@ separate BFS passes and avoids scanning all molecule bonds for every center atom
 
 from __future__ import annotations
 
-from collections import Counter, deque
-from dataclasses import dataclass
 import hashlib
 import json
+from collections import Counter, deque
+from dataclasses import dataclass
 from typing import Any
 
 from rdkit import Chem
