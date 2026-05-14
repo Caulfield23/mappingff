@@ -34,8 +34,8 @@ def main() -> None:
         "-d",
         "--db",
         type=Path,
-        default=Path("samples.db"),
-        help="Output database file path (default: samples.db)",
+        default=Path("parameters.db"),
+        help="Output database file path (default: parameters.db)",
     )
     build_parser.add_argument(
         "-a",

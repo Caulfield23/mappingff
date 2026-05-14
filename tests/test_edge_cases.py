@@ -9,7 +9,7 @@ from mappingff.mol import MolReader
 
 FIXTURES = Path(__file__).parent / "standard"
 SEG_DATA = FIXTURES / "samples"
-TARGET_FILE = FIXTURES / "target.mol"
+TARGET_FILE = FIXTURES / "50_ps_50_pmma.mol"
 
 
 def test_parameterize_skips_charge_adjustment_when_none(tmp_path, monkeypatch):
@@ -18,7 +18,7 @@ def test_parameterize_skips_charge_adjustment_when_none(tmp_path, monkeypatch):
 
     workflow.build_db(SEG_DATA, db_path)
 
-    def fail_if_called(*_args, **_kwargs):
+    def fail_if_called():
         raise AssertionError("adjust_total_charge should not be called")
 
     monkeypatch.setattr(workflow, "adjust_total_charge", fail_if_called)
