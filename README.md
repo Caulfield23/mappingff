@@ -8,24 +8,23 @@ It is designed for workflows where you already have parameterized simple molecul
 
 `mappingff` performs two main tasks:
 
-1. **Build a parameter database** from reference segment structures and their known LAMMPS data files.
+1. **Build a segment parameter database** from reference molecular structures and their known LAMMPS data files.
 2. **Parameterize a target molecule** by matching each atom and bonded term against that database, then writing a complete LAMMPS data file.
 
-You can obtain the reference LAMMPS data files for small molecules from other general parameterization tools (e.g., **ligpargen** for OPLS-style parameters), literature-reported values, or your own builds. **Please verify that the reference parameters are chemically reasonable and consistent with your intended force field** before building the database. The key requirement is that each atom in the target molecule must have its local chemical environment represented in the reference segments — see [Segment coverage requirements](#segment-coverage-requirements) for details on what counts as sufficient coverage. `mappingff` then transfers those parameters by matching environments, enabling parameterization of arbitrarily large or architecturally complex molecules (block copolymers, dendrimers, supramolecular assemblies, etc.) as long as their atomic environments are represented in the database.
+The reference LAMMPS files may come from external parameterization tools(e.g., **ligpargen** for OPLS-style parameters), literature values, or your own validated builds. **Please verify that the reference parameters are chemically reasonable and consistent with your intended force field** before building the database. The key requirement is that the target molecule's local chemical environments are represented in the segment database. — see [Segment coverage requirements](#segment-coverage-requirements) for details on what counts as sufficient coverage.
 
-## What mappingff does NOT do
+## What mappingff does not do
 
-`mappingff` does **not** fit, optimize, or derive new force-field parameters. Its output is only as reliable as the chemical coverage and consistency of the segment/reference data used to build the database. The quality of the generated LAMMPS file depends directly on the coverage and consistency of your segment database.
+`mappingff` does not:
 
-`mappingff` does **not**:
-- Access or use standard force-field parameter tables (OPLS, AMBER, CHARMM, etc.) directly
-- Perform quantum mechanical calculations to derive parameters
-- Fit parameters to experimental data or molecular dynamics simulations
-- Validate force-field physics or compatibility
-- Generate LAMMPS input scripts (pair_style, bond_style, etc.)
-- Create production-ready periodic simulation boxes
+- Fit, optimize, or derive new force-field parameters.
+- Run quantum-mechanical calculations.
+- Validate the physical correctness of a force field.
+- Have built-in standard parameter tables such as OPLS, AMBER, CHARMM, or GAFF for general molecules directly.
+- Generate LAMMPS input scripts such as `pair_style`, `bond_style`, or `run` commands.
+- Build production-ready periodic simulation boxes.
 
-**Important:** Treat generated parameters as a reproducible starting point for simulation setup, and validate them before scientific production runs. `mappingff` is currently marked as beta software.
+Treat the generated LAMMPS data file as a reproducible starting point for simulation setup. Inspect the logs, check all fallbacks and missing parameters, and validate the system before production simulations.
 
 ## Supported LAMMPS styles
 
@@ -47,20 +46,17 @@ Be careful when using `mappingff` with other force fields or LAMMPS styles, This
 ## Features
 
 - **Segment-based parameter database**: Builds a reusable SQLite database from reference `.lmp` files and associated molecular structures. The database stores atom types with four-level environment keys, fallback mappings, pair parameters, bonded parameters, and build metadata.
+- **Rooted graph-based atom environment encoding**: computes four atom-environment keys (`hop0`, `hop1`, `hop2`, `hop3`) using canonicalized local molecular environments.
+- **Rooted induced subgraph matching for hop1-hop3**: the center atom is marked as the root; all atoms and bonds within the selected graph radius are represented without using original RDKit atom indices in the serialized fingerprint.
+- **Hierarchical atom-type fallback**: target atoms are matched by trying `hop3` first, then `hop2`, `hop1`, and `hop0`.
+- **Bonded parameter transfer**: bonds, angles, dihedrals, and impropers are looked up using canonical combinations of participating atoms' `hop0` keys.
+- **Duplicate-observation aggregation**: repeated observations of the same environment are reduced by averaging numeric coefficients during database finalization.
 
-- **Graph-based atom environment encoding**: Computes canonical atom-environment hashes at four levels (hop0, hop1, hop2, hop3). Each descriptor includes center atom properties (atomic number, formal charge, aromaticity, degree, hydrogen count, ring membership, ring count, hybridization), neighbor signatures (element:bond_type:formal_charge), and bond kinds. All descriptors are canonicalized before hashing to ensure consistent keys regardless of atom ordering.
+- **Optional total-charge adjustment**: When `--charge` redistributes charges to match a requested total system charge using a two-stage algorithm: first over atoms with multiple observed charge values (weighted by absolute charge, bounded by observed range), then evenly over all atoms for any residual.
 
-- **Hierarchical atom-type fallback**: Assigns atom types by trying hop3 first (most specific), then falling back to hop2, hop1, and hop0 (coarsest) when an exact match is not available. This allows partial matching when the exact environment is not in the database, though such fallbacks should be reviewed.
+- **LAMMPS data output**: writes topology, coordinates, masses, pair coefficients, bonded coefficients, and box bounds.
 
-- **Bonded parameter transfer**: Maps bond, angle, dihedral, and improper coefficients using canonical keys based on local atom hop0 environments. For impropers, the first atom in each record is treated as the center atom; the remaining three substituents are sorted to produce a canonical key — this matches the convention expected by LAMMPS `improper_style cvff`.
-
-- **Duplicate-parameter averaging**: When the same environment appears multiple times in the segment library, mappingff stores all observations and computes averaged parameters during database finalization. Bonded coefficient arrays (K, r0, theta0, c1–c4) and pair parameters (sigma, epsilon) are highly stable and rarely produce genuine duplicates — averaging is effectively a safety net for these. **Charge is the exception**: partial charges can vary across different parameter sources or protonation states, so the averaged charge may differ noticeably from any single observation. Inspect your segment library for charge consistency and avoid mixing segments with large charge discrepancies for the same environment.**
-
-- **Optional total-charge adjustment**: When `--charge` is supplied, redistributes partial charges to match a requested total system charge using a two-stage algorithm: first over atoms with multiple observed charge values (weighted by absolute charge, bounded by observed range), then evenly over all atoms for any residual.
-
-- **LAMMPS data output**: Writes masses, pair coefficients, bonded coefficients, topology records, coordinates, and simulation box bounds in standard LAMMPS data-file format. The generated file contains all sections needed for a LAMMPS simulation.
-
-- **Flexible sample input**: Supports paired `.mol`/`.pdb` + `.lmp` segment directories (recommended), plus top-level standalone `.lmp` samples for cases where only LAMMPS data is available.
+- **Flexible sample input**: supports paired `.mol`/`.pdb` + `.lmp` segment directories and top-level standalone `.lmp` samples.
 
 ## Installation
 
@@ -70,9 +66,7 @@ Be careful when using `mappingff` with other force fields or LAMMPS styles, This
 - RDKit `>=2022.9.1`
 - NumPy `>=1.21`
 
-### Recommended installation
-
-RDKit is most reliably installed from `conda-forge`:
+RDKit is usually most reliable from `conda-forge`.
 
 ```bash
 git clone https://github.com/Caulfield23/mappingff.git
@@ -111,9 +105,9 @@ If standalone LAMMPS mode (single `.lmp` file) gives poor results, try pairing i
 mappingff build-db samples/ -d parameters.db
 ```
 
-This command creates an SQLite database containing atom types, fallback keys, pair parameters, bonded parameters, and metadata. It also writes a log file named `build-db.log` next to the database path.
+This creates an SQLite database and writes `build-db.log` next to the database path.
 
-To append new segments to an existing database instead of replacing it:
+To append new samples to an existing database
 
 ```bash
 mappingff build-db samples/ -d parameters.db --append
@@ -125,27 +119,23 @@ mappingff build-db samples/ -d parameters.db --append
 mappingff parameterize target.mol -d parameters.db -o target.lmp -v
 ```
 
-If `-o/--out` is omitted, the output path defaults to the target filename with the `.lmp` suffix. If `-d/--db` is omitted, `mappingff` looks for the first `.db` file in the same directory as the target molecule.
+If `-o/--out` is omitted, the output path defaults to the target filename with a `.lmp` suffix. If `-d/--db` is omitted, `mappingff` uses the first `.db` file found in the target molecule's directory.
 
-To adjust the total charge of the generated system (e.g., for a neutral polymer):
+To request a specific total charge:
 
 ```bash
 mappingff parameterize target.mol -d parameters.db -o target.lmp --charge 0.0
 ```
 
-Always inspect `parameterize.log` before using the generated data file in production simulations.
+Always inspect `parameterize.log` before using the generated LAMMPS data file.
 
 ## Command reference
 
 ### `mappingff build-db`
 
-Build a parameter database from a segment directory.
-
 ```bash
 mappingff build-db <samples_dir> [options]
 ```
-
-Options:
 
 | Option | Description | Default |
 |---|---|---|
@@ -155,73 +145,66 @@ Options:
 Notes:
 
 - Paired samples are discovered from immediate subdirectories of `<samples_dir>`.
-- Top-level `.lmp` files directly inside `<samples_dir>` are treated as standalone samples (not processed if inside subdirectories).
+- Top-level `.lmp` files directly inside `<samples_dir>` are treated as standalone samples.
 - Existing database files are replaced unless `--append` is used.
 
 ### `mappingff parameterize`
-
-Assign parameters to a target molecule and write a LAMMPS data file.
 
 ```bash
 mappingff parameterize <mol_file> [options]
 ```
 
-Options:
-
 | Option | Description | Default |
 |---|---|---|
 | `-d, --db PATH` | Parameter database path | first `.db` in target directory |
 | `-o, --out PATH` | Output LAMMPS data file | `<mol_file>.lmp` |
-| `-c, --charge FLOAT` | Target total charge; enables charge redistribution | no adjustment |
-| `-v, --verbose` | Print detailed matching information and write verbose log | disabled |
+| `-c, --charge FLOAT` | Requested total system charge | no adjustment |
+| `-v, --verbose` | Print detailed progress and write verbose log | disabled |
 
-## Input file expectations
+## Input expectations
 
 ### Target structures
 
-Target molecules should be provided as `.mol` or `.pdb` files. For chemically complex, charged, or unusual systems, prefer `.mol` files with explicit bond orders — RDKit bond-order inference from geometry may not be reliable for such cases.
-
-## Charge adjustment
-
-By default, `mappingff` preserves the charges transferred from the database without modification.
-
-When `--charge` is supplied, the tool adjusts atom charges in two stages to reach the requested total:
-
-**Stage 1 - Bounded weighted adjustment**: The charge difference (`target_charge - current_total_charge`) is distributed over atoms whose matched database atom type has more than one observed charge value (`charge_list` length > 1). The adjustment for each eligible atom is weighted by `abs(current_charge)` and bounded by the minimum and maximum observed charges for that atom type. Atoms that hit their bounds are fixed, and the remaining residual is redistributed to still-active atoms.
-
-**Stage 2 - Uniform residual adjustment**: Any remaining charge difference is distributed evenly across all atoms in the system.
-
-The log reports the charge before adjustment, after stage 1, after stage 2, and the requested target charge. This two-stage method guarantees the final written total approaches the requested target, but it can slightly perturb all charges in stage 2. Use charge adjustment as a final consistency operation, not as a substitute for validating the underlying charge model.
-
-Example:
-
-```bash
-mappingff parameterize target.mol -d parameters.db -o target.lmp --charge 0.0
-```
+Target molecules should be provided as `.mol` or `.pdb` files. For charged, aromatic, conjugated, or otherwise chemically sensitive systems, prefer `.mol` files with explicit bond orders. PDB-derived bond orders depend on RDKit inference and may not be reliable for all systems.
 
 ## Segment coverage requirements
 
-The segment database must cover the chemical environments present in the target molecule. This is the most important step in the workflow and the most common source of quality issues.
+The segment database must cover the chemical environments present in the target molecule.
 
 ### Atom coverage
 
-Each chemically distinct target atom should appear in a reference segment with a compatible `hop3` environment whenever possible. (See the [Atom environment keys](#atom-environment-keys) section for what `hop3` includes.) If the exact `hop3` environment is not present, the resolver falls back to `hop2`, `hop1`, or `hop0`, but these are progressively less specific and may assign incorrect parameters for atoms in unusual environments.
+Each chemically distinct target atom should appear in a reference segment with a compatible `hop3` rooted environment whenever possible. Segment boundaries, end caps, aromaticity perception, protonation, hydrogen representation, and bond-order inference can all change environment keys.
 
 ### Bonded-term coverage
 
-Bonded terms require the `hop0` environments of all participating atoms to be available in the database (see the [Atom environment keys](#atom-environment-keys) section for what `hop0` includes). For a dihedral `A-B-C-D`, matching depends on the `hop0` keys of A, B, C, and D.
+Bonded terms are matched by the `hop0` keys of participating atoms.
 
-Because `hop0` includes neighbor signatures (element:bond_type:formal_charge), the useful local context extends beyond the four dihedral atoms:
+For a dihedral:
+
+```text
+A-B-C-D
+```
+
+matching depends on the `hop0` keys of A, B, C, and D. Because `hop0` includes first-neighbor signatures, the practical context can extend to:
 
 ```text
 X-A-B-C-D-Y
 ```
 
-where X is an outer neighbor of A and Y is an outer neighbor of D. If a polymer chain is cut across this region and capped too aggressively, the `hop0` environments of A or D can change, and the dihedral may not match or may match incorrectly.
+where X is an outer neighbor of A and Y is an outer neighbor of D.
 
-### Boundary design rule
+If a polymer chain is cut and capped too aggressively, A or D may receive different neighbor signatures from the target molecule. For segment junctions, include enough overlap so that each bonded term appears inside at least one reference segment with the same local connectivity as in the target.
 
-When a bonded environment is only represented across a segment boundary, include enough overlapping atoms so that each bonded term appears inside at least one reference segment with the same local connectivity as in the target. For segment junctions, prefer fragments that overlap by at least three atoms around the cut and preserve the immediate neighbors required for dihedral lookup. Simple end-capping (e.g., adding hydrogens) can change the neighbor signatures and invalidate the hop0 environment.
+## Charge adjustment
+
+By default, transferred charges are written unchanged.
+
+When `--charge` is supplied, `mappingff` adjusts the total system charge in two stages:
+
+1. **Bounded weighted adjustment** over atoms whose matched database type has multiple observed charge values. The adjustment is weighted by `abs(current_charge)` and bounded by that atom type's observed charge range.
+2. **Uniform residual adjustment** over all atoms if any charge difference remains.
+
+This makes the final written charge approach the requested total, but it can perturb all charges in stage 2. Use this as a consistency operation, not as a substitute for validating the charge model.
 
 ## Output files
 
@@ -229,49 +212,33 @@ A successful parameterization produces:
 
 ```text
 target.lmp          # LAMMPS data file
-parameterize.log    # detailed matching log
+parameterize.log    # matching and warning log
 ```
 
 The LAMMPS data file contains:
-- Header with atom, bond, angle, dihedral, and improper counts and type counts
-- Orthogonal box bounds generated from target coordinates with 5 Å padding in each direction (this is a convenience bounding box, not an equilibrated simulation box)
-- `Masses` and `Pair Coeffs`
-- `Bond Coeffs`, `Angle Coeffs`, `Dihedral Coeffs`, and `Improper Coeffs`
-- `Atoms`, `Bonds`, `Angles`, `Dihedrals`, and `Impropers` sections
 
-The generated file is a LAMMPS **data** file. 
+- Header counts and type counts.
+- Orthogonal box bounds.
+- Masses.
+- Pair coefficients.
+- Bond, angle, dihedral, and improper coefficients.
+- Atoms, bonds, angles, dihedrals, and impropers.
 
-### Missing parameters
+Missing bonded parameters are written as zero/default coefficients and reported in the log. Fix these by adding better-covered segments rather than treating the output as production ready.
 
-When parameters are missing:
-- Unmatched atoms receive an `unknown` atom type with zero mass, zero pair coefficients, and zero charge.
-- Missing bond and angle parameters are written as zero coefficients.
-- Missing dihedral parameters are written as four zero coefficients.
-- Missing improper parameters are written with the default zeroed improper form used internally.
-- Warnings are written to `parameterize.log`.
+## Recommended validation workflow
 
-`mappingff` always produces a complete LAMMPS data file and writes all bonded terms, even when some parameters are missing — those terms are written with zero/default coefficients. Before using the output in production, inspect `parameterize.log` and confirm `no_match == 0`. A file with unresolved parameters is a diagnostic intermediate, not a production-ready input.
+Before production use:
 
-## Interpreting matching quality
+1. Confirm `no_match == 0` whenever possible.
+2. Review all hop2/hop1/hop0 fallbacks.
+3. Check warnings for missing bonded parameters.
+4. Inspect total charge, especially when `--charge` was used.
+5. Verify type counts and coefficient values.
+6. Run a short LAMMPS minimization or short MD check.
+7. Compare against reference systems, experiments, or higher-level calculations for important applications.
 
-The CLI prints a summary at the end of parameterization:
-
-```text
-Parameterize complete: 3313 atoms, 3486 bonds, 6245 angles, 9652 dihedrals, 1014 impropers, 73 types, hop3=2177, hop2=889, hop1=239, hop0=2, no_match=6
-```
-
-Use this summary and `parameterize.log` as a quality-control report:
-
-| Statistic | What it means | Quality bar |
-|---|---|---|
-| `hop3=...` | Exact high-specificity environment matches | Higher is better; aim for most atoms |
-| `hop2=...` | Second-level fallback; acceptable for uncommon environments | Review the specific atoms in log |
-| `hop1=...` | First-level fallback; indicates missing hop2 coverage | Investigate and add segments if frequent |
-| `hop0=...` | Coarse fallback; indicates significant environment gaps | Add segments covering these atoms |
-| `no_match=...` | Atoms with no database representation at any level | Must be zero for production use; add segments |
-| Missing bonded warnings | Bonded terms not found in database | Must be resolved; add reference segments |
-
-## Python API
+## Programmatic usage
 
 ```python
 from pathlib import Path
@@ -283,20 +250,31 @@ build_db(
     append=False,
 )
 
-stats = parameterize(
+result = parameterize(
     topo_path=Path("target.mol"),
     db_path=Path("parameters.db"),
     out_path=Path("target.lmp"),
     total_charge=None,
 )
 
-print(stats)
-# {'atoms': 1552, 'bonds': 1601, 'angles': 2900, 'dihedrals': 4291,
-#  'impropers': 350, 'unique_types': 45, 'hop3_matches': 1184,
-#  'hop2_matches': 268, 'hop1_matches': 100, 'hop0_matches': 0, 'no_match': 0}
+print(result)
 ```
 
-The `parameterize` function returns a dictionary containing topology counts and matching statistics. Use this for automated quality checks or reporting.
+## Database overview
+
+The SQLite database contains:
+
+| Table | Description |
+|---|---|
+| `atom_types` | Atom type definitions with hop3/hop2/hop1/hop0 keys, parameters, source metadata, and stored hop0/hop3 graphs |
+| `hop2_keymap` | hop2-level fallback mapping for inspection |
+| `hop1_keymap` | hop1-level fallback mapping for inspection |
+| `hop0_keymap` | hop0-level fallback mapping for inspection |
+| `bond_params` | Bond force constants and equilibrium distances |
+| `angle_params` | Angle force constants and equilibrium angles |
+| `dihedral_params` | OPLS dihedral coefficient arrays |
+| `improper_params` | Improper coefficients |
+| `meta` | Database metadata |
 
 ## License
 

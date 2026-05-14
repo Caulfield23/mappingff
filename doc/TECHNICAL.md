@@ -1,22 +1,19 @@
-# mappingff technical overview
+# mappingff technical notes
 
-This document provides an architectural overview and implementation details for `mappingff`. It is intended for users who need to understand how the tool works internally, why a parameter assignment succeeds or fails, and how to diagnose quality issues.
+This document describes how `mappingff` works internally. It is intended for users and developers who need to understand why a parameter assignment succeeds or fails, how environment keys are generated, and how to diagnose segment coverage problems.
 
 ## Source-level architecture
 
-The package is organized around a small set of modules with focused responsibilities:
-
 | Module | Responsibility |
 |---|---|
-| `mappingff.cli` | Command-line parsing, argument validation, and log setup. Handles both `build-db` and `parameterize` entry points. |
-| `mappingff.workflow` | High-level `build_db()` and `parameterize()` functions. Orchestrates database construction and target parameterization workflows. |
-| `mappingff.mol` | RDKit-based molecular parsing (`.mol`, `.pdb`, and internal `.lmp` conversion via `lmp2rdkitmol`), topology enumeration (atoms, bonds, angles, dihedrals, impropers), and hop-key computation. |
-| `mappingff.encode` | Local graph construction, canonicalization, and SHA-256 key generation for hop0/hop1/hop2/hop3 environments. |
-| `mappingff.db` | SQLite database schema, insertion, aggregation (averaging of duplicate environments), and lookup operations. |
-| `mappingff.fallback` | Atom type resolution from hop3 to hop0 during target parameterization. Queries the database in fallback order and returns the first match. |
-| `mappingff.lmp` | LAMMPS data file parsing (`parse_lammps`), writing (`generate_lammps`), and charge adjustment algorithm (`adjust_total_charge`). Also defines the `LammpsData` dataclass. |
-| `mappingff.lmp2rdkitmol` | Standalone `.lmp` to RDKit molecule conversion. Maps atom-type masses to elements using `mass.txt`, reconstructs connectivity from the Bonds section, and uses RDKit to infer bond orders from 3D coordinates. |
-| `mappingff.fallback` | Atom type resolution from hop3 to hop0. |
+| `mappingff.cli` | Command-line parsing, logging setup, and dispatch for `build-db` and `parameterize`. |
+| `mappingff.workflow` | High-level `build_db()` and `parameterize()` workflows. |
+| `mappingff.mol` | RDKit-based parsing, topology enumeration, improper detection, and hop-key computation. |
+| `mappingff.encode` | Local atom-environment encoding: `hop0`, rooted induced subgraph construction, canonicalization, and SHA-256 key generation. |
+| `mappingff.db` | SQLite schema, insertion, duplicate aggregation, lookup, and metadata management. |
+| `mappingff.fallback` | Atom type resolution in the order `hop3 → hop2 → hop1 → hop0`. |
+| `mappingff.lmp` | LAMMPS data parsing, LAMMPS data writing, and total-charge adjustment. |
+| `mappingff.lmp2rdkitmol` | Conversion of standalone `.lmp` samples into RDKit molecules using mass-to-element mapping and bond-order inference. |
 
 The public Python API is:
 
@@ -24,64 +21,114 @@ The public Python API is:
 from mappingff import build_db, parameterize
 ```
 
-All other modules are private and subject to change.
+All other modules should be treated as implementation details unless explicitly documented.
 
 ## Database construction workflow
 
-`build_db(samples_dir, db_path, append=False)` performs the following steps:
+`build_db(samples_dir, db_path, append=False)` performs the following high-level steps.
 
-### Step 1: Sample collection
+### 1. Sample discovery
 
-Two types of samples are collected:
+Two sample modes are supported:
 
-1. **Paired samples** from immediate subdirectories of `samples_dir`.
-   Each subdirectory is scanned for the first `.mol` or `.pdb` file and the first `.lmp` file found. To avoid ambiguity, keep only one topology file and one LAMMPS file per segment directory.
+1. **Paired samples**: immediate subdirectories of `samples_dir`, each containing one `.mol` or `.pdb` topology file and one `.lmp` reference LAMMPS data file.
+2. **Standalone LAMMPS samples**: `.lmp` files placed directly under `samples_dir`.
 
-2. **Standalone LAMMPS samples** from `.lmp` files placed directly inside `samples_dir` (not in subdirectories).
-   These are converted to RDKit molecules by mapping atom-type masses to elements using `mass.txt` and inferring bond orders from 3D coordinates.
+Standalone `.lmp` files inside subdirectories are not treated as standalone samples. Keep sample directories unambiguous.
 
-### Step 2: Per-sample processing
+### 2. Per-sample processing
 
 For each sample:
 
-1. Parse the LAMMPS reference data into a `LammpsData` object.
-2. Parse or reconstruct the molecular graph with RDKit.
-3. Enumerate atoms, bonds, angles, dihedrals, and impropers from the RDKit graph.
-4. Compute hop3, hop2, hop1, and hop0 keys for every atom.
-5. Insert atom parameters (hop keys, mass, sigma, epsilon, charge, source) into the `atom_types` table.
-6. Insert bonded parameters (bond, angle, dihedral, improper) into their respective tables using canonicalized hop0 keys.
-7. Build hop keymap entries for external validation.
+1. Parse the reference LAMMPS data into an internal `LammpsData` object.
+2. Parse or reconstruct the RDKit molecular graph.
+3. Enumerate atoms, bonds, angles, dihedrals, and impropers from the molecular graph.
+4. Compute `hop3`, `hop2`, `hop1`, and `hop0` keys for every atom.
+5. Insert atom parameters into `atom_types`.
+6. Insert bonded parameters using canonicalized combinations of participating atoms' `hop0` keys.
+7. Insert fallback keymap entries for inspection and validation.
 
-### Step 3: Database finalization
+### 3. Database finalization
 
-During `save()`, accumulated duplicate observations are reduced to scalar parameters by averaging:
+During `save()`, duplicate observations are reduced to scalar values.
 
-| Parameter | Aggregation method | Rounding |
-|---|---|---|
-| Atom `sigma` | Arithmetic mean | 7 decimals |
-| Atom `epsilon` | Arithmetic mean | 3 decimals |
-| Atom `charge` | Arithmetic mean | 6 decimals |
-| Bond coefficients `K, r0` | Arithmetic mean | 4 decimals |
-| Angle coefficients `K, theta0` | Arithmetic mean | 3 decimals |
-| Dihedral coefficients `c1, c2, c3, c4` | Arithmetic mean per term | 3 decimals |
-| Improper `K` | Arithmetic mean after choosing the modal `(d, n)` pair | 3 decimals |
-| Improper `d, n` | Most frequent pair (categorical, not averaged) | none |
+| Parameter | Aggregation |
+|---|---|
+| Atom `sigma` | arithmetic mean |
+| Atom `epsilon` | arithmetic mean |
+| Atom `charge` | arithmetic mean |
+| Bond coefficients | arithmetic mean per coefficient |
+| Angle coefficients | arithmetic mean per coefficient |
+| Dihedral coefficients | arithmetic mean per coefficient |
+| Improper `K` | arithmetic mean within the modal `(d, n)` pair |
+| Improper `d, n` | most frequent pair, treated categorically |
 
-**Practical note on averaging**: Atom typing at `hop3` resolution and bonded parameters keyed by `hop0` are already highly specific. It is rare for the same environment combination to produce genuinely different reference values requiring averaging. In normal usage, this aggregation step is effectively a safety net — not a routine occurrence. Users who want to verify or manually adjust any coefficient can inspect the database directly at any time.
+Duplicate observations should be rare in a well-designed segment library. When they appear, inspect whether they represent genuine repeated observations or inconsistent reference data.
 
 ## Environment key encoding
 
-Each atom receives four hashed graph descriptors representing increasingly broad local chemical environments.
+Each atom receives four hashed descriptors:
 
-### hop0 (coarsest)
+```text
+hop3_key, hop2_key, hop1_key, hop0_key
+```
 
-`hop0` is a compact local descriptor containing:
+The fallback resolver uses them from most specific to most general:
 
-- **Center atom properties**: atomic number, formal charge, aromaticity, hybridization, total degree, total hydrogens, ring membership, ring count.
-- **Neighbor signatures**: For each neighbor, `neighbor_atomic_number : bond_type_code : neighbor_formal_charge`.
-- **Bond kinds**: Sorted list of bond type codes (S, D, T, A) to neighbors.
+```text
+hop3 → hop2 → hop1 → hop0
+```
 
-Bond type codes:
+The current rooted-ego encoder version is:
+
+```text
+mappingff-rooted-ego-v2
+```
+
+Any database built with a different encoder version should be rebuilt.
+
+## Public encode API
+
+The current encode module preserves only the API needed by the rest of the package:
+
+```python
+get_hop0_subgraph(mol, atom) -> dict
+get_hop3_subgraph(mol, atom) -> dict
+compute_graph_hop_keys(mol, atom) -> tuple[str, str, str, str]
+```
+
+`compute_graph_hop_keys()` returns:
+
+```python
+(hop3_key, hop2_key, hop1_key, hop0_key)
+```
+
+Private helper functions should not be considered stable.
+
+## hop0 descriptor
+
+`hop0` is a compact descriptor centered on one atom. It is intentionally coarser than the rooted subgraph descriptors.
+
+It contains:
+
+- Center atom atomic number.
+- Formal charge.
+- Aromaticity flag.
+- Hybridization string.
+- Total degree.
+- Total hydrogens.
+- Ring membership.
+- Ring count.
+- Sorted first-neighbor signatures.
+- Sorted bond kind list.
+
+A neighbor signature has the form:
+
+```text
+neighbor_atomic_number : bond_type_code : neighbor_formal_charge
+```
+
+Bond type codes are:
 
 | RDKit bond type | Code |
 |---|---|
@@ -89,61 +136,178 @@ Bond type codes:
 | double | `D` |
 | triple | `T` |
 | aromatic | `A` |
-| unknown/unsupported | `U` |
+| unsupported or unknown | `U` |
 
-### hop1, hop2, hop3 (expanding shells)
+`hop0` is used both as the weakest atom-type fallback and as the key basis for bonded-parameter lookup.
 
-Higher-level descriptors expand the graph outward:
+## hop1-hop3 rooted induced subgraphs
 
-- `hop1`: hop0 plus first-neighbor shell (immediate neighbors of the center atom).
-- `hop2`: hop1 plus second-neighbor shell (neighbors of the first-neighbor atoms).
-- `hop3`: hop2 plus third-neighbor shell (neighbors of the second-neighbor atoms).
+`hop1`, `hop2`, and `hop3` are generated from rooted induced molecular subgraphs.
 
-Each level includes:
-- Atom properties for atoms in the shell.
-- Parent-bond information (bond type code to the parent atom in the previous level).
-- Cross-level bonds (bonds connecting atoms within the shell).
-- Intra-shell bonds (bonds between atoms both within the same shell).
+For a center atom `c` and radius `r`:
 
-### Canonicalization
+1. Compute graph distances from `c`.
+2. Select all atoms with distance `<= r`.
+3. Keep every bond whose two endpoints are both selected.
+4. Label the center atom as the root.
+5. Store each selected atom's distance from the root.
+6. Canonicalize the graph without serializing original atom indices.
+7. Serialize the canonical representation and hash it with SHA-256.
 
-All graphs are canonicalized before hashing:
-1. Sort atoms by their properties.
-2. Remap atom indices according to the sorted order.
-3. Sort bond lists.
-4. Serialize as canonical JSON.
-5. Hash with SHA-256.
+This differs from a parent-tree shell expansion. In a parent-tree representation, each atom in hop2 or hop3 is attached to one arbitrary parent atom. That is fragile for rings and symmetric environments because the same atom may be reachable through multiple equivalent paths. The rooted induced graph instead preserves all local bonds inside the selected radius.
 
-This ensures the same chemical environment always produces the identical key regardless of atom ordering in the input file.
+## Node and edge labels
 
-`hop0` is the coarsest fallback and is also used as the key basis for all bonded parameter lookups. `hop3` is the most specific atom environment and is used for primary atom type assignment.
+### Node labels
+
+Rooted subgraph node labels include:
+
+| Field | Meaning |
+|---|---|
+| `z` | atomic number |
+| `fc` | formal charge |
+| `ar` | aromaticity flag |
+| `deg` | total degree |
+| `h` | total hydrogens |
+| `ring` | ring-membership flag |
+| `ring_count` | number of rings containing the atom |
+| `dist` | shortest graph distance from the root |
+| `root` | `1` for the center atom, `0` otherwise |
+
+The original RDKit atom index is never included in the serialized graph or hash.
+
+### Edge labels
+
+Edge labels include:
+
+| Field | Meaning |
+|---|---|
+| `bt` | bond type code: `S`, `D`, `T`, `A`, or `U` |
+| `ar` | aromaticity flag |
+| `conj` | conjugation flag |
+| `ring` | ring-bond flag |
+
+## Canonicalization strategy
+
+The rooted-ego encoder uses deterministic color refinement to produce a stable, index-free serialized graph.
+
+At a high level:
+
+1. Build radius-3 local graph data once for the center atom.
+2. For each requested radius, filter the same local graph down to radius 1, 2, or 3.
+3. Initialize node colors from node labels.
+4. Iteratively refine node colors using sorted neighboring color and edge-label signatures.
+5. Group equivalent nodes into node classes.
+6. Preserve multiplicity using a `count` field.
+7. Represent edges between node classes with multiplicities.
+8. Serialize the canonical graph as deterministic JSON.
+9. Hash the JSON using SHA-256.
+
+The canonical graph has this conceptual shape:
+
+```json
+{
+  "version": "mappingff-rooted-ego-v2",
+  "kind": "rooted_induced_subgraph",
+  "radius": 3,
+  "root": "n0",
+  "node_classes": [
+    {
+      "id": "n0",
+      "color": "...",
+      "label": {
+        "z": 6,
+        "fc": 0,
+        "ar": 0,
+        "deg": 4,
+        "h": 1,
+        "ring": 0,
+        "ring_count": 0,
+        "dist": 0,
+        "root": 1
+      },
+      "count": 1
+    }
+  ],
+  "edges": [
+    {
+      "u": "n0",
+      "v": "n1",
+      "label": {
+        "bt": "S",
+        "ar": 0,
+        "conj": 0,
+        "ring": 0
+      },
+      "count": 1
+    }
+  ],
+  "stats": {
+    "nodes": 10,
+    "bonds": 10,
+    "color_rounds": 3
+  }
+}
+```
+
+The exact hash is an implementation detail. Users should interpret `hop3`, `hop2`, `hop1`, and `hop0` as environment-match levels, not as chemically meaningful names.
+
+## Performance behavior
+
+The optimized path is `compute_graph_hop_keys()`.
+
+Instead of independently building hop1, hop2, and hop3 for each atom, it:
+
+1. Runs one BFS to radius 3.
+2. Collects only local bonds by inspecting neighbors of atoms inside that local environment.
+3. Reuses the resulting `_EgoData` object for radius 1, 2, and 3.
+4. Uses frozen tuple signatures internally to avoid repeated JSON serialization during refinement.
+5. Serializes to canonical JSON only for the final hash.
+
+This matters for large polymers because scanning all molecular bonds for every atom is unnecessarily expensive.
+
+## Canonicalization limitations
+
+The current encoder is deterministic and removes dependency on original atom indices, but it is not a full nauty/bliss-style graph canonical labeling backend.
+
+Practical implications:
+
+- It is designed to be stable for typical local organic molecular environments.
+- It handles rings, same-shell bonds, cross-level bonds, and symmetric node classes more robustly than a single-parent hop tree.
+- Extremely pathological graph pairs that defeat Weisfeiler-Lehman-style color refinement are theoretically possible.
+- If strict graph-isomorphism canonical labeling becomes necessary, the encoder can be extended with an optional backend such as RDKit-assisted ranking, igraph/bliss, or nauty/Traces.
+
+For the intended use case, the most important practical improvement is that chemically equivalent local environments should not fail `hop3` matching merely because they appear at different atom indices or in differently sized molecules.
 
 ## Atom type resolution
 
-During target parameterization, the resolver queries the `atom_types` table in the following order:
+During target parameterization, the resolver queries the database in this order:
 
 ```text
 hop3_key → hop2_key → hop1_key → hop0_key
 ```
 
 The first match is used. The returned database row provides:
-- Internal LAMMPS type ID from the database.
-- Matched `hop0_key`.
+
+- Internal database LAMMPS type.
 - Element symbol.
-- Mass, pair coefficients (sigma, epsilon), and charge (averaged from duplicate environments).
+- Mass.
+- Pair coefficients.
+- Charge.
 - Source metadata.
+- Stored hop0/hop3 graph information.
 
-If no match is found at any level, the atom is assigned a generated `unknown` output type with zero mass, zero pair coefficients, and zero charge, reported as `no_match` in the output.
+A `hop3` match means the most specific stored environment was found. A `hop2`, `hop1`, or `hop0` match means a fallback was used and the assignment should be reviewed.
 
-The `hop0_keymap`, `hop1_keymap`, and `hop2_keymap` tables are maintained for validation and external inspection, but the fallback resolver currently queries indexed columns in the `atom_types` table directly.
+If no match is found, the atom is marked as `no_match` and assigned a generated unknown output type with zero/default values where necessary.
 
 ## Bonded parameter lookup
 
-Bonded parameters are keyed by atom `hop0` environments rather than by output atom type IDs. This allows bonded parameters to be independent of atom type numbering.
+Bonded parameters are keyed by atom `hop0` environments rather than output atom type IDs. This makes lookup independent of output type renumbering.
 
 ### Bonds
 
-Bond keys are order-independent. The stored key is:
+Bond keys are order-independent:
 
 ```text
 (min(keyA, keyB), max(keyA, keyB))
@@ -159,7 +323,7 @@ min((keyA, keyB, keyC), (keyC, keyB, keyA))
 
 ### Dihedrals
 
-Forward and reverse paths are treated as equivalent:
+Forward and reverse paths are equivalent:
 
 ```text
 min((keyA, keyB, keyC, keyD), (keyD, keyC, keyB, keyA))
@@ -173,40 +337,37 @@ The first atom is treated as the center atom. The three substituents are sorted:
 (center_key, sorted(substituent_key1, substituent_key2, substituent_key3))
 ```
 
-During target parameterization, impropers are filtered before lookup: only C or N center atoms with exactly three neighbors are considered. This matches OPLS-style improper-generation conventions and avoids generating impropers for non-trigonal centers.
+During target parameterization, impropers are filtered before lookup: only C or N center atoms with exactly three neighbors are considered.
 
-### Force field compatibility
+## Force-field compatibility
 
-`mappingff` has been tested with OPLS-style force field parameters using these LAMMPS styles:
+`mappingff` is tested around OPLS-style usage patterns. The tool can store and transfer numeric coefficients, but it does not know the physical meaning of arbitrary force-field styles.
 
-| Section | Style | Functional form | Averaging compatible? |
-|---------|-------|-----------------|----------------------|
-| `bond_style` | `harmonic` | `E = K·(r-r₀)²` | ✅ 安全 |
-| `angle_style` | `harmonic` | `E = K·(θ-θ₀)²` | ✅ 安全 |
-| `dihedral_style` | `opls` | `E = ½K₁[1+cos(φ)] + ½K₂[1−cos(2φ)] + ½K₃[1+cos(3φ)] + ½K₄[1−cos(4φ)]` | ✅ 安全（数学平均） |
-| `improper_style` | `cvff` | `E = K·[1 + d·cos(n·φ)]` | ✅ 对 CVFF 安全；❌ 其他 style 不兼容 |
+For CVFF-style impropers, the final two coefficients `d` and `n` are treated as a categorical pair. The most frequent `(d, n)` pair is selected, and `K` is averaged only across records sharing that pair.
 
-**Improper averaging is specific to CVFF style.** The `d` and `n` fields are treated as a categorical pair. The most common pair is selected, and `K` is averaged only over records sharing that pair. This matches CVFF/OPLS conventions where `d` and `n` encode discrete phase and periodicity values. **This approach is NOT compatible with CHARMM-style harmonic impropers, GROMOS impropers, or any style where improper coefficients are all purely numerical.**
-
-Using segment data with different force fields or LAMMPS styles in the same database may produce incorrect averaged parameters. The tool does not validate style consistency.
+This is not compatible with all improper forms. In particular, CHARMM-style harmonic impropers and other styles with different coefficient semantics should not be mixed without code changes and validation.
 
 ## Charge adjustment algorithm
 
-Charge adjustment is applied only when `total_charge` or `--charge` is explicitly provided.
+Charge adjustment is applied only when `total_charge` or `--charge` is explicitly supplied.
 
-Let `delta = target_charge - current_total_charge`.
+Let:
 
-### Stage 1: Bounded weighted adjustment
+```text
+delta = target_charge - current_total_charge
+```
 
-Atoms whose matched database atom type has more than one observed charge value (`charge_list` length > 1) are eligible for adjustment.
+### Stage 1: bounded weighted adjustment
 
-The adjustment is distributed in proportion to `abs(current_charge)` for each eligible atom, and bounded by the minimum and maximum observed charge values for that database atom type. Atoms that hit their bounds are fixed, and the remaining residual is redistributed to still-active atoms.
+Eligible atoms are those whose matched database atom type has more than one observed charge value in `charge_list`.
 
-### Stage 2: Uniform residual adjustment
+The adjustment is distributed in proportion to `abs(current_charge)` and bounded by the minimum and maximum observed charge values for that atom type. Atoms that hit bounds are fixed, and the remaining residual is redistributed among still-active atoms.
 
-Any remaining charge difference is distributed evenly across all atoms in the system.
+### Stage 2: uniform residual adjustment
 
-This guarantees that the final written total approaches the requested target, but it can slightly perturb all charges in stage 2. Always inspect the log to see before/after charge values.
+Any remaining charge difference is distributed evenly across all atoms.
+
+This makes the final written total approach the requested target, but stage 2 can slightly perturb every atom charge. Users should inspect the log and validate the charge model.
 
 ## Output construction
 
@@ -214,47 +375,60 @@ The generated `LammpsData` object is written as a standard LAMMPS data file.
 
 Implementation details:
 
-- Atom coordinates are taken directly from the target structure file.
-- The simulation box bounds are set to coordinate min/max plus 5 Å padding in each direction (orthogonal box only).
+- Atom coordinates are taken from the target structure file.
+- The simulation box is orthogonal and set to coordinate min/max plus padding.
 - All atoms use molecule tag `1`.
-- Output atom, bond, angle, dihedral, and improper type IDs are renumbered consecutively starting from 1.
-- Bonded terms are always written to the output, even when parameters are missing; missing values are written as zero/default coefficients with warnings in the log.
-- Coefficient type deduplication uses numerical tolerances (bond: K < 0.01, r0 < 0.001; angle: K < 0.01, theta0 < 0.1; dihedral/improper: per-element tolerance of 0.01).
-
-## Recommended validation workflow
-
-After generating a LAMMPS file:
-
-1. Read `parameterize.log` and confirm `no_match == 0` whenever possible for production use.
-2. Check all missing bonded-parameter warnings and add segments for any missing environments.
-3. Inspect total charge, especially if `--charge` was used.
-4. Verify the generated type counts and coefficient values are chemically reasonable.
-5. Run a short LAMMPS energy minimization or short MD run to check for crashes or obviously incorrect geometries.
-6. Compare energies, bonded distributions, or radii of gyration against known reference systems when available.
-7. For critical applications, validate against high-level calculations or experimental data for small model compounds.
+- Output atom, bond, angle, dihedral, and improper type IDs are renumbered consecutively from 1.
+- Bonded terms are written even when coefficients are missing; missing values are written as zero/default coefficients with warnings.
+- Coefficient type deduplication uses numerical tolerances.
 
 ## Fragment design guidelines
 
 ### Atom environments
 
-Each chemically distinct target atom environment should appear in a reference segment with a compatible `hop3` environment whenever possible. The more environments covered at hop3, the fewer fallbacks and the more specific the parameterization.
+Each chemically distinct target atom should appear in a reference segment with a compatible `hop3` environment whenever possible.
+
+Because hop1-hop3 are rooted induced subgraphs, the database should preserve not only shell membership but also local bonds inside each radius. Ring cuts, end caps, protonation changes, aromaticity changes, or altered hydrogen representation can all change the key.
 
 ### Bonded environments
 
-For a dihedral `A-B-C-D`, matching depends on the `hop0` environment of all four atoms. The practical context is:
+Bonded environments depend on `hop0` keys.
+
+For a dihedral:
+
+```text
+A-B-C-D
+```
+
+the practical context is often:
 
 ```text
 X-A-B-C-D-Y
 ```
 
-where X is an outer neighbor of A and Y is an outer neighbor of D. If a polymer chain is cut across this region and capped, the `hop0` environments of A or D can change, and the dihedral may not match.
+where X and Y are first neighbors of the outer dihedral atoms A and D.
 
-When a bonded environment is only represented across a segment boundary, include enough overlapping atoms so that each bonded term appears inside at least one reference segment with the same local connectivity as in the target. For junctions, prefer fragments that overlap by at least three atoms around the cut.
+If a chain is cut and capped such that A or D gains a different neighbor signature, the dihedral key may not match. When a bonded environment is represented only across a junction, include enough overlap so that the bonded term appears inside at least one reference segment with the same local connectivity as the target.
 
-### Common failure modes
+## Common failure modes
 
-- **Different bond orders**: If the target uses double bonds but the segment uses aromatic bonds (or vice versa) for the same connectivity, the hop keys will differ and matching will fail or fall back.
-- **Protonation differences**: If the target has a deprotonated carboxyl group and the segment has a neutral carboxyl, the neighbor signatures differ.
-- **Aromaticity perception**: RDKit may perceive aromaticity differently between a standalone `.lmp` and a `.mol` file for the same structure.
-- **Ring membership**: Atoms on ring boundaries can have different ring counts depending on how the ring was cut in the segment.
-- **Hydrogen handling**: Explicit vs. implicit hydrogens produce different hop keys. Prefer segments with explicit hydrogens that match the target's hydrogen representation.
+- **Old database after encoder changes**: rebuild the database whenever the environment encoding logic changes.
+- **Different bond orders**: single/double/aromatic differences change keys.
+- **Different aromaticity perception**: standalone `.lmp` reconstruction and `.mol` input may not perceive aromaticity identically.
+- **Different hydrogen representation**: explicit and implicit hydrogens affect atom labels.
+- **Protonation or charge differences**: formal charges and neighbor signatures affect keys.
+- **Segment boundary artifacts**: end caps can change `hop0` and rooted subgraph environments.
+- **Insufficient hop3 coverage**: frequent hop2/hop1/hop0 fallbacks indicate missing or incomplete segment coverage.
+- **Missing bonded coefficients**: add reference segments that contain the missing bonded environment with matching `hop0` context.
+
+## Recommended validation workflow
+
+After parameterization:
+
+1. Confirm `no_match == 0` whenever possible.
+2. Review all fallback counts: `hop2`, `hop1`, and `hop0`.
+3. Inspect missing bonded-parameter warnings.
+4. Check total charge and per-type charge consistency.
+5. Verify masses, pair coefficients, and bonded coefficients.
+6. Run a short LAMMPS minimization or short MD test.
+7. Compare against a reference system or model compound when possible.
