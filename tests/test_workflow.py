@@ -1,4 +1,4 @@
-"""Standard workflow tests: build-db -> parameterize via CLI."""
+"""Standard workflow tests: build -> parameterize via CLI."""
 
 import logging
 import sys
@@ -19,13 +19,13 @@ class TestStandardWorkflow:
         db_path = tmp_path / "samples.db"
         target_lmp = tmp_path / "target.lmp"
 
-        # Step 1: build-db
+        # Step 1: build
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
 
         build_args = [
             "mappingff",
-            "build-db",
+            "build",
             str(SEG_DATA),
             "-d",
             str(db_path),
@@ -43,7 +43,7 @@ class TestStandardWorkflow:
 
         param_args = [
             "mappingff",
-            "parameterize",
+            "par",
             str(TARGET_FILE),
             "-d",
             str(db_path),

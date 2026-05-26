@@ -6,14 +6,14 @@ This document describes how `mappingff` works internally. It is intended for use
 
 | Module | Responsibility |
 |---|---|
-| `mappingff.cli` | Command-line parsing, logging setup, and dispatch for `build-db` and `parameterize`. |
+| `mappingff.cli` | Command-line parsing, logging setup, and dispatch for `build` and `par`. |
 | `mappingff.workflow` | High-level `build_db()` and `parameterize()` workflows. |
 | `mappingff.mol` | RDKit-based parsing, topology enumeration, improper detection, and hop-key computation. |
 | `mappingff.encode` | Local atom-environment encoding: `hop0`, rooted induced subgraph construction, canonicalization, and SHA-256 key generation. |
 | `mappingff.db` | SQLite schema, insertion, duplicate aggregation, lookup, and metadata management. |
 | `mappingff.fallback` | Atom type resolution in the order `hop3 → hop2 → hop1 → hop0`. |
 | `mappingff.lmp` | LAMMPS data parsing, LAMMPS data writing, and total-charge adjustment. |
-| `mappingff.lmp2rdkitmol` | Conversion of standalone `.lmp` samples into RDKit molecules using mass-to-element mapping and bond-order inference. |
+| `mappingff.lmp2rdkitmol` | Conversion of standalone `.data` samples into RDKit molecules using mass-to-element mapping and bond-order inference. |
 
 The public Python API is:
 
@@ -31,10 +31,10 @@ All other modules should be treated as implementation details unless explicitly 
 
 Two sample modes are supported:
 
-1. **Paired samples**: immediate subdirectories of `samples_dir`, each containing one `.mol` or `.pdb` topology file and one `.lmp` reference LAMMPS data file.
-2. **Standalone LAMMPS samples**: `.lmp` files placed directly under `samples_dir`.
+1. **Paired samples**: immediate subdirectories of `samples_dir`, each containing one `.mol` or `.pdb` topology file and one LAMMPS data file (`.lmp`, `.lammps`, or `.data`).
+2. **Standalone LAMMPS samples**: `.lmp`, `.lammps`, or `.data` files placed directly under `samples_dir`.
 
-Standalone `.lmp` files inside subdirectories are not treated as standalone samples. Keep sample directories unambiguous.
+Standalone LAMMPS data files inside subdirectories are not treated as standalone samples. Keep sample directories unambiguous.
 
 ### 2. Per-sample processing
 
@@ -414,7 +414,7 @@ If a chain is cut and capped such that A or D gains a different neighbor signatu
 
 - **Old database after encoder changes**: rebuild the database whenever the environment encoding logic changes.
 - **Different bond orders**: single/double/aromatic differences change keys.
-- **Different aromaticity perception**: standalone `.lmp` reconstruction and `.mol` input may not perceive aromaticity identically.
+- **Different aromaticity perception**: standalone `Lammpsdata` reconstruction and `.mol` input may not perceive aromaticity identically.
 - **Different hydrogen representation**: explicit and implicit hydrogens affect atom labels.
 - **Protonation or charge differences**: formal charges and neighbor signatures affect keys.
 - **Segment boundary artifacts**: end caps can change `hop0` and rooted subgraph environments.

@@ -23,7 +23,7 @@ def build_db(samples_dir: Path, db_path: Path, append: bool = False) -> None:
     """Build a parameter database from sample molecules.
 
     Iterates over subdirectories in samples_dir, each expected to contain
-    a .mol (or .pdb) and a .lmp file with the same base name.
+    a .mol (or .pdb) and a lammps data file with the same base name.
 
     Args:
         samples_dir: Directory containing sample subdirectories.
@@ -52,11 +52,16 @@ def build_db(samples_dir: Path, db_path: Path, append: bool = False) -> None:
         topo_path = next(sample_dir.glob("*.mol"), None) or next(
             sample_dir.glob("*.pdb"), None
         )
-        lmp_path = next(sample_dir.glob("*.lmp"), None)
+        lmp_path = (
+            next(sample_dir.glob("*.lmp"), None)
+            or next(sample_dir.glob("*.lammps"), None)
+            or next(sample_dir.glob("*.data"), None)
+        )
         if topo_path and lmp_path:
             items.append((lmp_path, topo_path))
-    for lmp_path in samples_dir.glob("*.lmp"):
-        items.append((lmp_path, None))
+    for pattern in ("*.lmp", "*.lammps", "*.data"):
+        for lmp_path in samples_dir.glob(pattern):
+            items.append((lmp_path, None))
 
     for lmp_path, topo_path in items:
         seg_name = lmp_path.stem
@@ -293,7 +298,7 @@ def parameterize(
     Args:
         topo_path: Path to target molecule .mol or .pdb file.
         db_path: Path to the SQLite database file.
-        out_path: Output LAMMPS file path. If None, uses <mol_file>.lmp.
+        out_path: Output LAMMPS file path. If None, uses <mol_file>.data.
         total_charge: Target total charge for the system. If None, no adjustment (default: None).
             If provided, residual charge will be adjusted evenly across all atoms.
 
@@ -328,7 +333,7 @@ def parameterize(
 
     # Determine output path
     if out_path is None:
-        out_path = topo_path.with_suffix(".lmp")
+        out_path = topo_path.with_suffix(".data")
 
     # Resolve atom types
     atom_type_map: dict[int, int] = {}  # atom_idx -> lammps_type (resolved from db)

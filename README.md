@@ -45,7 +45,7 @@ Be careful when using `mappingff` with other force fields or LAMMPS styles, This
 
 ## Features
 
-- **Segment-based parameter database**: Builds a reusable SQLite database from reference `.lmp` files and associated molecular structures. The database stores atom types with four-level environment keys, fallback mappings, pair parameters, bonded parameters, and build metadata.
+- **Segment-based parameter database**: Builds a reusable SQLite database from reference `LAMMPS data` files and associated molecular structures. The database stores atom types with four-level environment keys, fallback mappings, pair parameters, bonded parameters, and build metadata.
 - **Rooted graph-based atom environment encoding**: computes four atom-environment keys (`hop0`, `hop1`, `hop2`, `hop3`) using canonicalized local molecular environments.
 - **Rooted induced subgraph matching for hop1-hop3**: the center atom is marked as the root; all atoms and bonds within the selected graph radius are represented without using original RDKit atom indices in the serialized fingerprint.
 - **Hierarchical atom-type fallback**: target atoms are matched by trying `hop3` first, then `hop2`, `hop1`, and `hop0`.
@@ -56,7 +56,7 @@ Be careful when using `mappingff` with other force fields or LAMMPS styles, This
 
 - **LAMMPS data output**: writes topology, coordinates, masses, pair coefficients, bonded coefficients, and box bounds.
 
-- **Flexible sample input**: supports paired `.mol`/`.pdb` + `.lmp` segment directories and top-level standalone `.lmp` samples.
+- **Flexible sample input**: supports paired `.mol`/`.pdb` + `LAMMPS data` segment directories and top-level standalone `LAMMPS data` samples.
 
 ## Installation
 
@@ -75,7 +75,7 @@ cd mappingff
 conda create -n mappingff python=3.10 rdkit numpy -c conda-forge
 conda activate mappingff
 
-python -m pip install -e .
+pip install -e .
 ```
 
 ## Quick start
@@ -89,52 +89,52 @@ project/
 ├── samples/
 │   ├── segment1/
 │   │   ├── segment1.mol      # or segment1.pdb
-│   │   └── segment1.lmp      # reference LAMMPS data with known parameters
+│   │   └── segment1.data      # reference LAMMPS data with known parameters
 │   ├── segment2/
 │   │   ├── segment2.pdb
-│   │   └── segment2.lmp
-│   └── segment3.lmp          # sigle LAMMPS data file
+│   │   └── segment2.data
+│   └── segment3.data          # sigle LAMMPS data file
 └── target.mol                # or target.pdb
 ```
 
-If standalone LAMMPS mode (single `.lmp` file) gives poor results, try pairing it with a `.mol` or `.pdb` topology file in the same subdirectory.
+If standalone LAMMPS mode (single `.data` file) gives poor results, try pairing it with a `.mol` or `.pdb` topology file in the same subdirectory.
 
 ### 2. Build the parameter database
 
 ```bash
-mappingff build-db samples/ -d parameters.db
+mappingff build samples/ -d parameters.db
 ```
 
-This creates an SQLite database and writes `build-db.log` next to the database path.
+This creates an SQLite database and writes `build.log` next to the database path.
 
 To append new samples to an existing database
 
 ```bash
-mappingff build-db samples/ -d parameters.db --append
+mappingff build samples/ -d parameters.db --append
 ```
 
 ### 3. Parameterize a target molecule
 
 ```bash
-mappingff parameterize target.mol -d parameters.db -o target.lmp -v
+mappingff par target.mol -d parameters.db -o target.data -v
 ```
 
-If `-o/--out` is omitted, the output path defaults to the target filename with a `.lmp` suffix. If `-d/--db` is omitted, `mappingff` uses the first `.db` file found in the target molecule's directory.
+If `-o/--out` is omitted, the output path defaults to the target filename with a `.data`, `.lammps` or `.lmp` suffix. If `-d/--db` is omitted, `mappingff` uses the first `.db` file found in the target molecule's directory.
 
 To request a specific total charge:
 
 ```bash
-mappingff parameterize target.mol -d parameters.db -o target.lmp --charge 0.0
+mappingff par target.mol -d parameters.db -o target.data -c 0.0 -v
 ```
 
-Always inspect `parameterize.log` before using the generated LAMMPS data file.
+Always inspect `par.log` before using the generated LAMMPS data file.
 
 ## Command reference
 
-### `mappingff build-db`
+### `mappingff build`
 
 ```bash
-mappingff build-db <samples_dir> [options]
+mappingff build <samples_dir> [options]
 ```
 
 | Option | Description | Default |
@@ -145,19 +145,19 @@ mappingff build-db <samples_dir> [options]
 Notes:
 
 - Paired samples are discovered from immediate subdirectories of `<samples_dir>`.
-- Top-level `.lmp` files directly inside `<samples_dir>` are treated as standalone samples.
+- Top-level `LAMMPS data` files directly inside `<samples_dir>` are treated as standalone samples.
 - Existing database files are replaced unless `--append` is used.
 
-### `mappingff parameterize`
+### `mappingff par`
 
 ```bash
-mappingff parameterize <mol_file> [options]
+mappingff par <mol_file> [options]
 ```
 
 | Option | Description | Default |
 |---|---|---|
 | `-d, --db PATH` | Parameter database path | first `.db` in target directory |
-| `-o, --out PATH` | Output LAMMPS data file | `<mol_file>.lmp` |
+| `-o, --out PATH` | Output LAMMPS data file | `<mol_file>.data` |
 | `-c, --charge FLOAT` | Requested total system charge | no adjustment |
 | `-v, --verbose` | Print detailed progress and write verbose log | disabled |
 
@@ -211,8 +211,8 @@ This makes the final written charge approach the requested total, but it can per
 A successful parameterization produces:
 
 ```text
-target.lmp          # LAMMPS data file
-parameterize.log    # matching and warning log
+target.data          # LAMMPS data file
+par.log    # matching and warning log
 ```
 
 The LAMMPS data file contains:
@@ -253,7 +253,7 @@ build_db(
 result = parameterize(
     topo_path=Path("target.mol"),
     db_path=Path("parameters.db"),
-    out_path=Path("target.lmp"),
+    out_path=Path("target.data"),
     total_charge=None,
 )
 

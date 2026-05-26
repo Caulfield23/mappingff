@@ -21,14 +21,12 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    # build-db command
-    build_parser = sub.add_parser(
-        "build-db", help="Build parameter database from samples"
-    )
+    # build command
+    build_parser = sub.add_parser("build", help="Build parameter database from samples")
     build_parser.add_argument(
         "samples_dir",
         type=Path,
-        help="Directory containing sample subdirectories with .mol and .lmp files",
+        help="Directory containing sample subdirectories with .mol and lammps data files",
     )
     build_parser.add_argument(
         "-d",
@@ -44,8 +42,8 @@ def main() -> None:
         help="Append to existing database instead of replacing (default: replace)",
     )
 
-    # parameterize command
-    param_parser = sub.add_parser("parameterize", help="Parameterize target molecule")
+    # par command
+    param_parser = sub.add_parser("par", help="paramterize target molecule")
     param_parser.add_argument(
         "mol_file",
         type=Path,
@@ -55,7 +53,7 @@ def main() -> None:
         "-o",
         "--out",
         type=Path,
-        help="Output LAMMPS file path (default: <mol_file>.lmp)",
+        help="Output LAMMPS file path (default: <mol_file>.data)",
     )
     param_parser.add_argument(
         "-d",
@@ -80,22 +78,22 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.command == "build-db":
+    if args.command == "build":
         logging.basicConfig(
             level=logging.INFO,
             format="[%(levelname)s] %(name)s: %(message)s",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(Path(args.db).parent / "build-db.log", mode="w"),
+                logging.FileHandler(Path(args.db).parent / "build.log", mode="w"),
             ],
         )
         db_path = args.db
         build_db(args.samples_dir, db_path, append=args.append)
         print("Database build complete!")
 
-    elif args.command == "parameterize":
+    elif args.command == "par":
         if args.out is None:
-            args.out = args.mol_file.with_suffix(".lmp")
+            args.out = args.mol_file.with_suffix(".data")
 
         if args.db is None:
             db_files = list(args.mol_file.parent.glob("*.db"))
@@ -110,9 +108,7 @@ def main() -> None:
             format="[%(levelname)s] %(name)s: %(message)s",
             handlers=[
                 logging.StreamHandler(),
-                logging.FileHandler(
-                    Path(args.out).parent / "parameterize.log", mode="w"
-                ),
+                logging.FileHandler(Path(args.out).parent / "par.log", mode="w"),
             ],
         )
 

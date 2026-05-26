@@ -42,6 +42,13 @@ def lmp_to_rdkit_mol(lmp_data, tolerance: float = 0.1) -> Chem.Mol:
     2. Build RWMol with atoms+coords, bonds (connectivity only, no bond order)
     3. DetermineBondOrders() infers bond orders from geometry
     4. Return sanitized Mol
+
+    Notes
+    -----
+    The charge column in a LAMMPS data file is normally a force-field partial
+    charge, not an RDKit formal charge. Therefore partial charges must not be
+    assigned with Atom.SetFormalCharge(). The molecular net charge passed to
+    DetermineBondOrders() is inferred from the sum of partial charges.
     """
     # 1. type_id -> element
     type_to_elem = {}
@@ -55,12 +62,12 @@ def lmp_to_rdkit_mol(lmp_data, tolerance: float = 0.1) -> Chem.Mol:
     mol = Chem.RWMol()
     for atom_id, mol_tag, type_id, charge, x, y, z in lmp_data.atom_records:
         atom = Chem.Atom(type_to_elem[type_id])
-        atom.SetFormalCharge(int(round(charge)))
+        # Do NOT set formal charge from LAMMPS partial charge.
         mol.AddAtom(atom)
 
     # Add bonds (connectivity only, DetermineBondOrders will infer order)
     for bond_id, bond_type, a1, a2 in lmp_data.bond_records:
-        mol.AddBond(a1 - 1, a2 - 1)  # 0-based index
+        mol.AddBond(a1 - 1, a2 - 1, Chem.BondType.SINGLE)  # 0-based index
 
     # 3. Set coordinates
     conf = Chem.Conformer(len(lmp_data.atom_records))
@@ -71,7 +78,11 @@ def lmp_to_rdkit_mol(lmp_data, tolerance: float = 0.1) -> Chem.Mol:
     mol.AddConformer(conf)
 
     # 4. Infer bond orders
-    rdDetermineBonds.DetermineBondOrders(mol, charge=0)
+    partial_charge_sum = sum(
+        charge for _, _, _, charge, _, _, _ in lmp_data.atom_records
+    )
+    total_charge = int(round(partial_charge_sum))
+    rdDetermineBonds.DetermineBondOrders(mol, charge=total_charge)
 
     # 5. Sanitize
     Chem.SanitizeMol(mol)

@@ -126,7 +126,7 @@ def parse_lammps(path: Path) -> LammpsData:
     """Parse a LAMMPS data file.
 
     Args:
-        path: Path to the LAMMPS data file (.lmp or .lammps).
+        path: Path to the LAMMPS data file.
 
     Returns:
         LammpsData object containing all parsed sections.
@@ -382,32 +382,36 @@ def generate_lammps(data: LammpsData, out_path: Path) -> None:
     lines.append("")
 
     # Bonds
-    lines.append("Bonds")
-    lines.append("")
-    for bond_id, bond_type, a1, a2 in data.bond_records:
-        lines.append(f"{bond_id:>10} {bond_type:>10} {a1:>10} {a2:>10}")
-    lines.append("")
+    if data.bond_records:
+        lines.append("Bonds")
+        lines.append("")
+        for bond_id, bond_type, a1, a2 in data.bond_records:
+            lines.append(f"{bond_id:>10} {bond_type:>10} {a1:>10} {a2:>10}")
+        lines.append("")
 
     # Angles
-    lines.append("Angles")
-    lines.append("")
-    for angle_id, angle_type, a1, a2, a3 in data.angle_records:
-        lines.append(f"{angle_id:>10} {angle_type:>10} {a1:>10} {a2:>10} {a3:>10}")
-    lines.append("")
+    if data.angle_records:
+        lines.append("Angles")
+        lines.append("")
+        for angle_id, angle_type, a1, a2, a3 in data.angle_records:
+            lines.append(f"{angle_id:>10} {angle_type:>10} {a1:>10} {a2:>10} {a3:>10}")
+        lines.append("")
 
     # Dihedrals
-    lines.append("Dihedrals")
-    lines.append("")
-    for dih_id, dih_type, a1, a2, a3, a4 in data.dihedral_records:
-        lines.append(f"{dih_id:>10} {dih_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
-    lines.append("")
+    if data.dihedral_records:
+        lines.append("Dihedrals")
+        lines.append("")
+        for dih_id, dih_type, a1, a2, a3, a4 in data.dihedral_records:
+            lines.append(f"{dih_id:>10} {dih_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
+        lines.append("")
 
     # Impropers
-    lines.append("Impropers")
-    lines.append("")
-    for imp_id, imp_type, a1, a2, a3, a4 in data.improper_records:
-        lines.append(f"{imp_id:>10} {imp_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
-    lines.append("")
+    if data.improper_records:
+        lines.append("Impropers")
+        lines.append("")
+        for imp_id, imp_type, a1, a2, a3, a4 in data.improper_records:
+            lines.append(f"{imp_id:>10} {imp_type:>10} {a1:>10} {a2:>10} {a3:>10} {a4:>10}")
+        lines.append("")
 
     out_path.write_text("\n".join(lines) + "\n")
 

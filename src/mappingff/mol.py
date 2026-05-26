@@ -81,14 +81,21 @@ class MolReader:
             self._mol = mol
 
         elif suffix == ".pdb":
-            mol = Chem.MolFromPDBFile(str(self._path), sanitize=False, removeHs=False)
+            pdb_text = self._path.read_text(encoding="utf-8", errors="replace")
+            has_conect = "CONECT" in pdb_text
+            mol = Chem.MolFromPDBBlock(
+                pdb_text,
+                sanitize=False,
+                removeHs=False,
+                proximityBonding=not has_conect,
+            )
             if mol is None:
                 raise ValueError(f"Failed to parse PDB file: {self._path}")
             rdDetermineBonds.DetermineBondOrders(mol, charge=0)
             SanitizeMol(mol)
             self._mol = mol
 
-        elif suffix == ".lmp":
+        elif suffix == ".lmp" or suffix == ".lammps" or suffix == ".data":
             lmp_data = parse_lammps(self._path)
             self._mol = lmp_to_rdkit_mol(lmp_data)
         else:
